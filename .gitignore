@@ -1,0 +1,8 @@
+node_modules/
+dist/
+public/wasm/
+.env.local
+*.log
+
+# 工具生成的分享包，非源码
+.trae-html-share-packages/
