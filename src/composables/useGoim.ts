@@ -14,6 +14,9 @@ import {
   type GoimEvent,
   type MsgData,
 } from '@goim/web-sdk';
+import * as account from '../api/account/account';
+import * as im from '../api/account/im';
+import { clearSession, CODE_DEPENDENCY, isBusinessApiError } from '../api/client';
 
 // ———— 环境配置（见 .env.local） ————
 
@@ -24,9 +27,7 @@ function resolveHttpBase(raw: string): string {
 
 const API_URL = resolveHttpBase(import.meta.env.VITE_GOIM_API_URL || '/api/v1');
 const WS_URL = import.meta.env.VITE_GOIM_WS_URL || '/ws';
-const PLATFORM_ID = Number(import.meta.env.VITE_GOIM_PLATFORM_ID || '1');
-const ADMIN_USER_ID = import.meta.env.VITE_GOIM_ADMIN_USER_ID || 'imAdmin';
-const ADMIN_SECRET = import.meta.env.VITE_GOIM_ADMIN_SECRET || '';
+const PLATFORM_ID = Number(import.meta.env.VITE_GOIM_PLATFORM_ID || '5');
 
 // 相对路径的 WS 地址按当前页面 origin 补全
 function resolveEndpoint(raw: string): string {
@@ -47,9 +48,11 @@ interface ChatState {
   selected?: Conversation;
   messages: MsgData[];
   logs: string[];
-  loginUserID: string;
+  loginName: string;
+  password: string;
   loginError: string;
   loggingIn: boolean;
+  registering: boolean;
   targetType: number;
   targetID: string;
   draft: string;
@@ -65,9 +68,11 @@ const state = reactive<ChatState>({
   selected: undefined,
   messages: [],
   logs: [],
-  loginUserID: '',
+  loginName: '',
+  password: '',
   loginError: '',
   loggingIn: false,
+  registering: false,
   targetType: SessionType.C2C,
   targetID: '',
   draft: '',
@@ -81,6 +86,7 @@ let booted = false;
 // ———— 工具 ————
 
 function errMsg(err: unknown): string {
+  if (isBusinessApiError(err)) return `[${err.code}] ${err.message}`;
   if (isGoimError(err)) return `[${err.code}] ${err.message}`;
   if (err instanceof Error) return err.message;
   return String(err);
@@ -364,37 +370,142 @@ async function sendMessage(): Promise<void> {
   }
 }
 
-// ———— 登录 ————
+// ———— IM token 自动续期 ————
 
-async function login(): Promise<void> {
-  if (!client) return;
+const IM_TOKEN_RENEW_INTERVAL_MS = 30 * 1000;
+const IM_TOKEN_RENEW_AHEAD_MS = 5 * 60 * 1000;
 
-  const userID = state.loginUserID.trim();
-  if (!userID) {
-    state.loginError = '请输入 userID';
+let imTokenExpireAt = 0;
+let imRenewTimer: number | undefined;
+let imRenewing = false;
+
+function stopImTokenRenewal(): void {
+  if (imRenewTimer !== undefined) {
+    window.clearInterval(imRenewTimer);
+    imRenewTimer = undefined;
+  }
+  imTokenExpireAt = 0;
+}
+
+async function renewImToken(): Promise<void> {
+  if (!client?.currentUserID || imRenewing) return;
+  if (imTokenExpireAt - Date.now() >= IM_TOKEN_RENEW_AHEAD_MS) return;
+
+  imRenewing = true;
+  try {
+    const resp = await im.imToken();
+    client.updateToken(resp.token, resp.expireTimeSeconds);
+    imTokenExpireAt = Date.now() + resp.expireTimeSeconds * 1000;
+    log(`IM token 已自动续期，剩余 ${resp.expireTimeSeconds}s`);
+  } catch (err) {
+    log(`IM token 续期失败：${errMsg(err)}`);
+  } finally {
+    imRenewing = false;
+  }
+}
+
+function startImTokenRenewal(expireTimeSeconds: number): void {
+  stopImTokenRenewal();
+  imTokenExpireAt = Date.now() + expireTimeSeconds * 1000;
+  imRenewTimer = window.setInterval(() => {
+    void renewImToken();
+  }, IM_TOKEN_RENEW_INTERVAL_MS);
+}
+
+// ———— 登录 / 注册 ————
+
+// IM 账号尚未开通时先触发重试，再兑换一次
+async function exchangeImToken(): Promise<im.IMTokenResponse> {
+  try {
+    return await im.imToken();
+  } catch (err) {
+    if (!isBusinessApiError(err) || err.code !== CODE_DEPENDENCY) {
+      throw err;
+    }
+    log('IM 账号尚未开通，尝试重新开通…');
+    try {
+      await im.imRetry();
+      return await im.imToken();
+    } catch {
+      throw new Error('IM 账号开通失败，请稍后重试');
+    }
+  }
+}
+
+async function authenticate(kind: 'login' | 'register'): Promise<void> {
+  if (!client || state.loggingIn || state.registering) return;
+
+  const loginName = state.loginName.trim();
+  const password = state.password;
+  if (!loginName) {
+    state.loginError = '请输入登录名';
+    return;
+  }
+  if (!password) {
+    state.loginError = '请输入密码';
     return;
   }
 
   state.loginError = '';
-  state.loggingIn = true;
+  if (kind === 'login') {
+    state.loggingIn = true;
+  } else {
+    state.registering = true;
+  }
   try {
-    await client.login(userID);
-    log('登录返回（WS 就绪），等待后台同步…');
+    if (kind === 'login') {
+      await account.login({ loginName, password });
+      log(`业务登录成功：${loginName}`);
+    } else {
+      await account.register({ loginName, password, nickname: loginName });
+      log(`业务注册成功：${loginName}`);
+    }
+
+    const imToken = await exchangeImToken();
+    await client.loginWithToken(
+      imToken.userId,
+      imToken.token,
+      imToken.expireTimeSeconds,
+      imToken.platformId || PLATFORM_ID,
+    );
+    startImTokenRenewal(imToken.expireTimeSeconds);
+    state.password = '';
+    log('IM 登录返回（WS 就绪），等待后台同步…');
     updateStatus();
     void refreshConversations();
   } catch (err) {
+    // 登录失败不吞错误；同时清理定时器与业务会话，避免残留半登录态
+    stopImTokenRenewal();
+    clearSession();
     state.loginError = errMsg(err);
-    log(`登录失败：${errMsg(err)}`);
+    log(`${kind === 'login' ? '登录' : '注册'}失败：${errMsg(err)}`);
   } finally {
     state.loggingIn = false;
+    state.registering = false;
     updateStatus();
   }
 }
 
+async function login(): Promise<void> {
+  await authenticate('login');
+}
+
+async function register(): Promise<void> {
+  await authenticate('register');
+}
+
 async function logout(): Promise<void> {
+  stopImTokenRenewal();
   state.selected = undefined;
   state.messages = [];
   state.conversations = [];
+
+  try {
+    await account.logout();
+  } catch (err) {
+    log(`业务登出失败：${errMsg(err)}`);
+  }
+
   if (!client?.currentUserID) {
     updateStatus();
     return;
@@ -467,8 +578,6 @@ async function boot(): Promise<void> {
         baseURL: API_URL,
         endpoint: resolveEndpoint(WS_URL),
         platformID: PLATFORM_ID,
-        adminSecret: ADMIN_SECRET,
-        adminUserID: ADMIN_USER_ID,
         sessionDataPath: 'idb',
         // wasm 无 stdout，日志经 onLog 回调进入页面事件日志；级别由这里控制
         logging: { level: 'debug', format: 'console' },
@@ -496,6 +605,7 @@ export function useGoim() {
     userBadge,
     boot,
     login,
+    register,
     logout,
     refreshConversations,
     selectConversation,

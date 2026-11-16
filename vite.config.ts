@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiTarget = env.VITE_GOIM_API_PROXY || 'http://192.168.241.128:18880';
   const wsTarget = env.VITE_GOIM_WS_PROXY || 'ws://192.168.241.128:50001';
+  const businessTarget = env.VITE_BUSINESS_API_PROXY || 'http://127.0.0.1:8080';
 
   return {
     plugins: [vue()],
@@ -27,6 +28,12 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': { target: apiTarget, changeOrigin: true },
         '/ws': { target: wsTarget, ws: true, changeOrigin: true },
+        // 业务后端：/biz-api/v1/* -> /api/v1/*
+        '/biz-api': {
+          target: businessTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/biz-api\/v1/, '/api/v1'),
+        },
       },
     },
   };
