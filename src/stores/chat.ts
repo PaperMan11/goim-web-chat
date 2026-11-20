@@ -4,8 +4,14 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { MsgStatus, type Conversation, type MsgData, type SendMsgResp } from '@goim/web-sdk';
 
-import { getIM } from '@/im/client';
-import { loadLocalMessages, markConversationRead, mergeMessages, pullHistory } from '@/im/message';
+import {
+  getUnreadCount,
+  isIMLoggedIn,
+  listConversations,
+  loadConversationMessages,
+  markReadUpTo,
+} from '@/services/chat/conversation';
+import { mergeMessages } from '@/utils/message';
 
 const DRAFT_KEY = 'goim_chat_drafts';
 
@@ -112,24 +118,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function loadConversations(): Promise<void> {
-    const instance = getIM();
-    if (!instance?.currentUserID) return;
+    if (!isIMLoggedIn()) return;
     loading.value = true;
     try {
-      let remote: Conversation[] = [];
-      try {
-        remote = await instance.conversations.getAll();
-      } catch {
-        remote = [];
-      }
-      let local: Conversation[] = [];
-      try {
-        local = await instance.conversations.listLocal();
-      } catch {
-        local = [];
-      }
-      if (remote.length || !conversations.value.length) {
-        upsertConversations(remote.length ? remote : local);
+      const list = await listConversations();
+      if (list.length || !conversations.value.length) {
+        upsertConversations(list);
       }
       await refreshUnread();
     } finally {
@@ -139,17 +133,12 @@ export const useChatStore = defineStore('chat', () => {
 
   // SDK 本地未读：不发网络请求，缓存不完整时结果为下界
   async function refreshUnreadFor(conversationID: string): Promise<void> {
-    const instance = getIM();
-    if (!instance?.currentUserID || !conversationID) return;
-    try {
-      unread.value[conversationID] = await instance.conversations.unreadCount(conversationID);
-    } catch {
-      // 单个会话读取失败不影响其它会话
-    }
+    const count = await getUnreadCount(conversationID);
+    if (count !== undefined) unread.value[conversationID] = count;
   }
 
   async function refreshUnread(): Promise<void> {
-    if (!getIM()?.currentUserID) return;
+    if (!isIMLoggedIn()) return;
     for (const conv of conversations.value) {
       if (conv.conversationID) await refreshUnreadFor(conv.conversationID);
     }
@@ -157,21 +146,10 @@ export const useChatStore = defineStore('chat', () => {
 
   async function openConversation(conversationID: string): Promise<void> {
     activeConversationID.value = conversationID;
+    if (messagesByConversation.value[conversationID]) return;
 
-    if (!messagesByConversation.value[conversationID]) {
-      try {
-        const local = await loadLocalMessages(conversationID);
-        upsertMessages(local.map((msg) => ({ ...msg, conversationID })));
-      } catch {
-        // 本地缓存不可用时继续拉服务端
-      }
-      try {
-        const page = await pullHistory(conversationID, { pageSize: 20 });
-        upsertMessages(page.map((msg) => ({ ...msg, conversationID })));
-      } catch {
-        // 历史拉取失败保留已有缓存
-      }
-    }
+    const list = await loadConversationMessages(conversationID, 20);
+    upsertMessages(list.map((msg) => ({ ...msg, conversationID })));
   }
 
   async function markActiveRead(): Promise<void> {
@@ -183,7 +161,7 @@ export const useChatStore = defineStore('chat', () => {
     );
     if (lastSeq <= 0) return;
     try {
-      await markConversationRead(conversationID, lastSeq);
+      await markReadUpTo(conversationID, lastSeq);
       unread.value[conversationID] = 0;
     } catch {
       // 已读上报失败不阻塞 UI

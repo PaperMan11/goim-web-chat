@@ -65,3 +65,52 @@ export function messagePreview(msg: MessageLike | undefined, max = 30): string {
   const text = messageText(msg);
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
+
+// ———— 消息合并 ————
+
+// undefined 不覆盖已有字段（避免回包只有部分字段时把内容清空）
+function assignDefined(target: MsgData, source: MsgData): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) {
+      (target as Record<string, unknown>)[key] = value;
+    }
+  }
+}
+
+function compareMessages(a: MsgData, b: MsgData): number {
+  const aSeq = a.seq ?? 0;
+  const bSeq = b.seq ?? 0;
+  if (aSeq !== bSeq) return aSeq - bSeq;
+  return (a.sendTime ?? 0) - (b.sendTime ?? 0);
+}
+
+// 按 serverMsgID / clientMsgID 去重合并，返回排序后的新数组（不修改入参）
+// 后到的字段覆盖先到的，但 undefined 不覆盖
+export function mergeMessages(existing: MsgData[], incoming: MsgData[]): MsgData[] {
+  const merged: MsgData[] = existing.map((msg) => ({ ...msg }));
+  const byServer = new Map<string, MsgData>();
+  const byClient = new Map<string, MsgData>();
+
+  const index = (msg: MsgData): void => {
+    if (msg.serverMsgID) byServer.set(msg.serverMsgID, msg);
+    if (msg.clientMsgID) byClient.set(msg.clientMsgID, msg);
+  };
+
+  for (const msg of merged) index(msg);
+
+  for (const msg of incoming) {
+    const found =
+      (msg.serverMsgID ? byServer.get(msg.serverMsgID) : undefined) ??
+      (msg.clientMsgID ? byClient.get(msg.clientMsgID) : undefined);
+    if (found) {
+      assignDefined(found, msg);
+      index(found);
+      continue;
+    }
+    const copy = { ...msg };
+    merged.push(copy);
+    index(copy);
+  }
+
+  return merged.sort(compareMessages);
+}

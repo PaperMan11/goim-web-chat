@@ -44,7 +44,7 @@
 约束：
 
 - `views/components` 不得 import `api/*` 或 `@goim/web-sdk`，只能读 store、调 store action
-- `stores` 不得直接 `fetch`，只能经 `services` 或 `api`
+- `stores` 不得直接 `fetch` 或 import `im/`，只能经 `services` 或 `api`
 - `services` 可以同时用 `api` 与 `im`，是唯一的跨层编排位置
 - `im` 不得 import `api`（避免 IM 层被 HTTP 细节污染）
 
@@ -67,9 +67,10 @@ src/
   im/
     client.ts                 # Goim 单例：init / loginWithToken / logout / updateToken / 事件订阅
     events.ts                 # SDK 事件 → 业务事件（消息、会话、连接、同步）
-    message.ts                # 发送、乐观消息合并、已读上报
+    message.ts                # 发送、历史拉取、已读与撤回
   services/                  # 按业务域分目录，目录=域、文件=流程
     auth/loginFlow.ts         # 账号登录 → im/token → SDK 登录 → 同步完成
+    chat/conversation.ts      # 会话列表、本地/远端历史、未读、已读上报
     chat/send.ts              # 文本 / 图片 / 文件消息发送与失败重试
     chat/upload.ts            # 上传队列：单文件 / 分片 / ETag 续传 / 403 续签
   stores/
