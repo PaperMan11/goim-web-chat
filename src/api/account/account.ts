@@ -4,7 +4,6 @@
 import {
   applyAuthSession,
   clearSession,
-  getDeviceId,
   saveSession,
   type AuthPayload,
   type BusinessSession,
@@ -38,7 +37,6 @@ export async function register(input: {
         loginName: input.loginName,
         password: input.password,
         nickname: input.nickname || input.loginName,
-        deviceId: getDeviceId(),
       },
     },
     { auth: false, retryOnUnauthorized: false },
@@ -60,7 +58,6 @@ export async function login(input: {
       data: {
         loginName: input.loginName,
         password: input.password,
-        deviceId: getDeviceId(),
       },
     },
     { auth: false, retryOnUnauthorized: false },

@@ -1,25 +1,14 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
-import AppHeader from './components/AppHeader.vue';
-import LoginBar from './components/LoginBar.vue';
-import ConversationList from './components/ConversationList.vue';
-import MessagePanel from './components/MessagePanel.vue';
-import EventLog from './components/EventLog.vue';
-import { useGoim } from './composables/useGoim';
 
-const { boot } = useGoim();
+import { bootstrapAuth } from '@/services/auth/loginFlow';
 
+// 刷新页面后恢复业务会话并接入 IM；失败时停留在登录页由路由守卫兜底
 onMounted(() => {
-  void boot();
+  void bootstrapAuth().catch(() => undefined);
 });
 </script>
 
 <template>
-  <AppHeader />
-  <LoginBar />
-  <main>
-    <ConversationList />
-    <MessagePanel />
-  </main>
-  <EventLog />
+  <RouterView />
 </template>

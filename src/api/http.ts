@@ -11,6 +11,7 @@ import {
   CODE_UNAUTHENTICATED,
   applyAuthSession,
   clearSession,
+  getDeviceId,
   isBusinessApiError,
   loadSession,
   saveSession,
@@ -32,7 +33,7 @@ export function createHttpClient(options: HttpClientOptions): AxiosInstance {
   return axios.create({
     baseURL: options.baseURL.replace(/\/+$/, ''),
     timeout: options.timeout ?? 15000,
-    headers: { 'X-Client-Platform': 'web' },
+    headers: { 'X-Client-Platform': 'web', 'X-Device-Id': getDeviceId() },
   });
 }
 
@@ -54,7 +55,8 @@ interface Envelope {
   data?: unknown;
 }
 
-function unwrap<T>(payload: unknown): T {
+// 解析 {code,msg,data} 响应；供需要自行处理 304 的接口复用
+export function unwrapEnvelope<T>(payload: unknown): T {
   const envelope = payload as Envelope | null;
   if (!envelope || typeof envelope !== 'object' || typeof envelope.code !== 'number') {
     throw new BusinessApiError(-1, '接口响应格式异常');
@@ -68,7 +70,7 @@ function unwrap<T>(payload: unknown): T {
 }
 
 // 把 axios 异常 / 网络异常统一成 BusinessApiError
-function normalize(err: unknown): unknown {
+export function normalizeError(err: unknown): unknown {
   if (isBusinessApiError(err)) return err;
   if (axios.isAxiosError(err)) {
     const data = err.response?.data as Envelope | undefined;
@@ -108,7 +110,7 @@ async function send<T>(
     },
   });
 
-  return options.raw ? (response.data as T) : unwrap<T>(response.data);
+  return options.raw ? (response.data as T) : unwrapEnvelope<T>(response.data);
 }
 
 // 业务请求入口：path 相对于实例 baseURL
@@ -120,7 +122,7 @@ export async function request<T>(
   try {
     return await send<T>(path, config, options);
   } catch (err) {
-    const normalized = normalize(err);
+    const normalized = normalizeError(err);
     if (
       isBusinessApiError(normalized) &&
       options.retryOnUnauthorized !== false &&
@@ -130,7 +132,7 @@ export async function request<T>(
         await renewSession();
         return await send<T>(path, config, { ...options, retryOnUnauthorized: false });
       } catch (retryErr) {
-        throw normalize(retryErr);
+        throw normalizeError(retryErr);
       }
     }
     throw normalized;

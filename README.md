@@ -82,7 +82,7 @@ VITE_BUSINESS_API_PROXY=http://127.0.0.1:8080
 | `VITE_GOIM_WS_PROXY` | 开发期 `/ws` 代理目标，默认 `ws://192.168.241.128:50001` |
 | `VITE_BUSINESS_API_PROXY` | 开发期 `/biz-api` 代理目标，默认 `http://127.0.0.1:8080` |
 
-如需绕过代理直连服务端，可将 `VITE_GOIM_API_URL` / `VITE_GOIM_WS_URL` / `VITE_BUSINESS_API_URL` 改为完整地址（如 `http://192.168.241.128:18880/api/v1`、`ws://192.168.241.128:50001/ws`、`http://127.0.0.1:8080/api/v1`），并确保服务端已放开 CORS。生产环境使用业务账号登录，不要在前端配置任何 admin secret。
+如需绕过代理直连服务端，可将 `VITE_GOIM_API_URL` / `VITE_GOIM_WS_URL` / `VITE_BUSINESS_API_URL` 改为完整地址（如 `http://192.168.241.128:18880/api/v1`、`ws://192.168.241.128:50001/ws`、`http://127.0.0.1:8080/biz-api/v1`），并确保服务端已放开 CORS。生产环境使用业务账号登录，不要在前端配置任何 admin secret。
 
 ### 4. 启动开发服务
 

@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import tailwindcss from '@tailwindcss/vite';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, loadEnv } from 'vite';
 
@@ -14,9 +15,10 @@ export default defineConfig(({ mode }) => {
   const businessTarget = env.VITE_BUSINESS_API_PROXY || 'http://127.0.0.1:8080';
 
   return {
-    plugins: [vue()],
+    plugins: [vue(), tailwindcss()],
     resolve: {
       alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
         '@goim/web-sdk': sdkEntry,
       },
     },
@@ -26,13 +28,13 @@ export default defineConfig(({ mode }) => {
       fs: { allow: ['..'] },
       // 转发到联调服务，绕开浏览器 CORS
       proxy: {
-        '/api': { target: apiTarget, changeOrigin: true },
+        // goim-api 的 HTTP 前缀同样是 /api/v1，原样转发
+        '/api/v1': { target: apiTarget, changeOrigin: true },
         '/ws': { target: wsTarget, ws: true, changeOrigin: true },
-        // 业务后端：/biz-api/v1/* -> /api/v1/*
+        // 业务后端真实路径就是 /biz-api/v1，直接原样转发
         '/biz-api': {
           target: businessTarget,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/biz-api\/v1/, '/api/v1'),
         },
       },
     },
