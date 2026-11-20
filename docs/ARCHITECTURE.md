@@ -70,7 +70,7 @@ src/
     message.ts                # 发送、历史拉取、已读与撤回
   services/                  # 按业务域分目录，目录=域、文件=流程
     auth/loginFlow.ts         # 账号登录 → im/token → SDK 登录 → 同步完成
-    chat/conversation.ts      # 会话列表、本地/远端历史、未读、已读上报
+    chat/conversation.ts      # 本地优先会话加载、本地/远端历史、未读、已读上报
     chat/send.ts              # 文本 / 图片 / 文件消息发送与失败重试
     chat/upload.ts            # 上传队列：单文件 / 分片 / ETag 续传 / 403 续签
   stores/
@@ -181,7 +181,8 @@ SDK 原始事件 ──▶ im/events.ts ──▶ 业务事件 ──▶ stores 
 | `message-sent` | MsgSent | `chat.markSent` |
 | `message-revoked` | RevokeMsg / MsgRevoked | `chat.markRevoked` |
 | `read` | MarkAsRead | `chat.applyReadReceipt` |
-| `conversation` | ConversationUpdate / ConversationCreated | `chat.upsertConversation` |
+| `conversation` | ConversationUpdate / ConversationCreated | `chat.reloadConversations`（重读本地缓存） |
+| `conversations-synced` | ConversationSynced（会话本地缓存已更新） | `chat.reloadConversations`（重读本地缓存） |
 | `conversation-deleted` | ConversationDelete | `chat.removeConversation` |
 | `session-expired` | ForceLogout | 清会话 + 回登录页 |
 | `raw` | 其它未映射事件 | 仅进调试日志 |

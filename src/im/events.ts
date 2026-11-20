@@ -24,6 +24,7 @@ export type IMBusinessEvent =
   | { type: 'message-revoked'; payload: unknown }
   | { type: 'read'; payload: unknown }
   | { type: 'conversation'; payload: unknown }
+  | { type: 'conversations-synced' }
   | { type: 'conversation-deleted'; payload: unknown }
   | { type: 'session-expired'; reason: string }
   | { type: 'login'; ok: boolean; error?: unknown }
@@ -75,6 +76,8 @@ export function translateEvent(
     case EventType.ConversationUpdate:
     case EventType.ConversationCreated:
       return [{ type: 'conversation', payload: event.payload }];
+    case EventType.ConversationSynced:
+      return [{ type: 'conversations-synced' }];
     case EventType.ConversationDelete:
       return [{ type: 'conversation-deleted', payload: event.payload }];
     case EventType.ForceLogout:

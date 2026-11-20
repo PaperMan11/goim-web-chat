@@ -5,9 +5,10 @@ import { defineStore } from 'pinia';
 import { MsgStatus, type Conversation, type MsgData, type SendMsgResp } from '@goim/web-sdk';
 
 import {
+  fetchConversations,
   getUnreadCount,
   isIMLoggedIn,
-  listConversations,
+  listLocalConversations,
   loadConversationMessages,
   markReadUpTo,
 } from '@/services/chat/conversation';
@@ -117,11 +118,25 @@ export const useChatStore = defineStore('chat', () => {
     if (index >= 0) list[index] = { ...list[index], status: MsgStatus.HasDeleted };
   }
 
+  // 登录后立即用本地缓存渲染，不等同步完成
+  async function loadCachedConversations(): Promise<void> {
+    const list = await listLocalConversations();
+    if (list.length) upsertConversations(list);
+    await refreshUnread();
+  }
+
+  // 同步完成 / 会话变更后刷新本地；本地为空（首次登录）时回退服务端全量
+  async function reloadConversations(): Promise<void> {
+    await loadCachedConversations();
+    if (!conversations.value.length) await loadConversations();
+  }
+
+  // 服务端全量会话（手动刷新或本地为空兜底）
   async function loadConversations(): Promise<void> {
     if (!isIMLoggedIn()) return;
     loading.value = true;
     try {
-      const list = await listConversations();
+      const list = await fetchConversations();
       if (list.length || !conversations.value.length) {
         upsertConversations(list);
       }
@@ -203,6 +218,8 @@ export const useChatStore = defineStore('chat', () => {
     markSent,
     markFailed,
     markRevoked,
+    loadCachedConversations,
+    reloadConversations,
     loadConversations,
     refreshUnread,
     refreshUnreadFor,

@@ -59,8 +59,9 @@ function bindIMEvents(): void {
         break;
       }
       case 'conversation':
-        // 1300 会话变更（ConversationUpdateTips），SDK 已增量同步缓存，这里只刷新列表
-        void chat.loadConversations();
+      case 'conversations-synced':
+        // 1300 会话变更 / 会话缓存同步完成：本地已含增量，重新读本地
+        void chat.reloadConversations();
         break;
       case 'conversation-deleted': {
         const tip = event.payload as ClearConversationTips | undefined;
@@ -184,6 +185,9 @@ export async function startIM(): Promise<void> {
 
 async function afterReady(): Promise<void> {
   const auth = useAuthStore();
+  // 先用本地缓存渲染会话，增量同步完成后再由事件刷新
+  void useChatStore().loadCachedConversations();
+
   try {
     auth.me = await getMyProfile();
   } catch {
@@ -194,10 +198,8 @@ async function afterReady(): Promise<void> {
     await waitForSync(30_000);
     auth.stage = AuthStage.Synced;
   } catch {
-    // 同步超时仍可继续加载会话
+    // 同步超时仍可继续使用本地缓存
   }
-
-  await useChatStore().loadConversations();
 }
 
 // IM 未开通时重新开通再登录
@@ -212,7 +214,7 @@ export async function retryIM(): Promise<void> {
   }
   await startIM();
   if (auth.stage === AuthStage.IMReady || auth.stage === AuthStage.Synced) {
-    void chat.loadConversations();
+    void chat.reloadConversations();
   }
 }
 

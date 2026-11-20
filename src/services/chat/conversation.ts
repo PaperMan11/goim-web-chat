@@ -11,21 +11,23 @@ export function isIMLoggedIn(): boolean {
   return Boolean(getIM()?.currentUserID);
 }
 
-// 会话列表：远端优先，为空时回退本地缓存
-export async function listConversations(): Promise<Conversation[]> {
+// 本地 IndexedDB 会话缓存：同步未完成时可能不完整，但可先渲染
+export async function listLocalConversations(): Promise<Conversation[]> {
   const instance = getIM();
   if (!instance?.currentUserID) return [];
-
-  let remote: Conversation[] = [];
-  try {
-    remote = await instance.conversations.getAll();
-  } catch {
-    remote = [];
-  }
-  if (remote.length) return remote;
-
   try {
     return await instance.conversations.listLocal();
+  } catch {
+    return [];
+  }
+}
+
+// 服务端全量会话（仅本地为空时兜底，或手动刷新）
+export async function fetchConversations(): Promise<Conversation[]> {
+  const instance = getIM();
+  if (!instance?.currentUserID) return [];
+  try {
+    return await instance.conversations.getAll();
   } catch {
     return [];
   }
