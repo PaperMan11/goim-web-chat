@@ -91,26 +91,34 @@ export function requireIM(): Goim {
 
 // ———— 登录 / 登出 ————
 
-// 用业务后端签发的 IM 凭证登录；apiBaseURL / wsEndpoint 缺省时用环境配置
-export async function loginIMWithToken(input: {
+export interface IMLoginInput {
   userID: string;
   token: string;
   expireTimeSeconds: number;
   platformID?: number;
-  apiBaseURL?: string;
-  wsEndpoint?: string;
-}): Promise<void> {
-  const instance = await initIM({
-    apiBaseURL: input.apiBaseURL,
-    wsEndpoint: input.wsEndpoint,
-    platformID: input.platformID,
-  });
-  await instance.loginWithToken(
+}
+
+// 使用已初始化的实例登录。调用方可先 initIM() 并注册事件，
+// 再调用本函数，避免漏掉 LoginSuccess / SyncStart 等登录期事件。
+export async function loginIM(input: IMLoginInput): Promise<void> {
+  await requireIM().loginWithToken(
     input.userID,
     input.token,
     input.expireTimeSeconds,
     input.platformID ?? defaultPlatformID(),
   );
+}
+
+// 一站式：初始化 + 登录（apiBaseURL / wsEndpoint 缺省时用环境配置）
+export async function loginIMWithToken(
+  input: IMLoginInput & { apiBaseURL?: string; wsEndpoint?: string },
+): Promise<void> {
+  await initIM({
+    apiBaseURL: input.apiBaseURL,
+    wsEndpoint: input.wsEndpoint,
+    platformID: input.platformID,
+  });
+  await loginIM(input);
 }
 
 // clearData=true 时清空本地 IndexedDB（切换账号场景）

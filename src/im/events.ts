@@ -26,6 +26,7 @@ export type IMBusinessEvent =
   | { type: 'conversation'; payload: unknown }
   | { type: 'conversation-deleted'; payload: unknown }
   | { type: 'session-expired'; reason: string }
+  | { type: 'login'; ok: boolean; error?: unknown }
   | { type: 'raw'; event: GoimEvent };
 
 // NewMsg 载荷在不同事件源下可能是数组、{ msgs } 或单条消息
@@ -78,6 +79,10 @@ export function translateEvent(
       return [{ type: 'conversation-deleted', payload: event.payload }];
     case EventType.ForceLogout:
       return [{ type: 'session-expired', reason: 'ForceLogout' }];
+    case EventType.LoginSuccess:
+      return [{ type: 'login', ok: true }];
+    case EventType.LoginFailed:
+      return [{ type: 'login', ok: false, error: event.payload }];
     default:
       return [{ type: 'raw', event }];
   }

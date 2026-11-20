@@ -14,8 +14,8 @@ import * as imApi from '@/api/account/im';
 import { CODE_DEPENDENCY, isBusinessApiError, loadSession } from '@/api/client';
 import { getMyProfile } from '@/api/profile/profile';
 import {
-  getIMSnapshot,
-  loginIMWithToken,
+  initIM,
+  loginIM,
   logoutIM,
   subscribeIM,
   waitForSync,
@@ -77,6 +77,9 @@ function bindIMEvents(): void {
           : chat.refreshUnread());
         break;
       }
+      case 'login':
+        if (!event.ok) auth.imError = 'IM 登录失败';
+        break;
       case 'session-expired':
         auth.reset();
         chat.reset();
@@ -88,18 +91,6 @@ function bindIMEvents(): void {
         break;
     }
   });
-}
-
-// 连接/同步事件可能早于订阅发生（loginWithToken 返回时通常已连上），
-// 订阅后用快照回填一次，避免 UI 停留在初始的「未连接」
-function syncIMStatus(): void {
-  const auth = useAuthStore();
-  const snapshot = getIMSnapshot();
-  auth.transportStatus = snapshot.transport;
-  auth.syncState = snapshot.sync;
-  if (snapshot.sync === SyncState.Synced && auth.stage === AuthStage.IMReady) {
-    auth.stage = AuthStage.Synced;
-  }
 }
 
 // 页面刷新后恢复登录态
@@ -169,16 +160,19 @@ export async function startIM(): Promise<void> {
 
   auth.stage = AuthStage.IMConnecting;
   try {
-    await loginIMWithToken({
+    // 先初始化并注册事件，再登录：否则会漏掉 LoginSuccess / Connecting / SyncStart 等登录期事件
+    await initIM({
+      apiBaseURL: credentials.apiBaseUrl || undefined,
+      wsEndpoint: credentials.wsUrl || undefined,
+      platformID: credentials.platformId,
+    });
+    bindIMEvents();
+    await loginIM({
       userID: credentials.userId,
       token: credentials.token,
       expireTimeSeconds: credentials.expireTimeSeconds,
       platformID: credentials.platformId,
-      apiBaseURL: credentials.apiBaseUrl || undefined,
-      wsEndpoint: credentials.wsUrl || undefined,
     });
-    bindIMEvents();
-    syncIMStatus();
     auth.stage = AuthStage.IMReady;
   } catch (err) {
     auth.imError = errorMessage(err);
