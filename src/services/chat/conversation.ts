@@ -11,15 +11,28 @@ export function isIMLoggedIn(): boolean {
   return Boolean(getIM()?.currentUserID);
 }
 
-// 本地 IndexedDB 会话缓存：同步未完成时可能不完整，但可先渲染
+// 本地会话列表：Local.ListConversations 已按「置顶优先 + latestMsgSendTime 倒序」排序，
+// 分页上限 200，这里循环取全量，保证会话列表和联系人页看到同一份完整数据
+const CONV_PAGE_SIZE = 200;
+const CONV_MAX_PAGES = 10;
+
 export async function listLocalConversations(): Promise<Conversation[]> {
   const instance = getIM();
   if (!instance?.currentUserID) return [];
+  const all: Conversation[] = [];
   try {
-    return await instance.conversations.listLocal();
+    for (let page = 0; page < CONV_MAX_PAGES; page++) {
+      const result = await instance.local.listConversations(
+        page * CONV_PAGE_SIZE,
+        CONV_PAGE_SIZE,
+      );
+      all.push(...result.items);
+      if (!result.hasMore || !result.items.length) break;
+    }
   } catch {
-    return [];
+    // 本地缓存不可用时返回已取到的部分
   }
+  return all;
 }
 
 // 服务端全量会话（仅本地为空时兜底，或手动刷新）
@@ -33,12 +46,12 @@ export async function fetchConversations(): Promise<Conversation[]> {
   }
 }
 
-// 本地未读数（不发网络请求；缓存不完整时为下界）
+// 本地未读数（Local.UnreadCount 本地推导；缓存不完整时为下界）
 export async function getUnreadCount(conversationID: string): Promise<number | undefined> {
   const instance = getIM();
   if (!instance?.currentUserID || !conversationID) return undefined;
   try {
-    return await instance.conversations.unreadCount(conversationID);
+    return await instance.local.unreadCount(conversationID);
   } catch {
     return undefined;
   }

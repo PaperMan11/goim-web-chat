@@ -70,6 +70,7 @@ src/
     message.ts                # 发送、历史拉取、已读与撤回
   services/                  # 按业务域分目录，目录=域、文件=流程
     auth/loginFlow.ts         # 账号登录 → im/token → SDK 登录 → 同步完成
+    auth/imToken.ts           # IM token 续期：到期前预取并注入 SDK，失败退避/失效登出
     chat/conversation.ts      # 本地优先会话加载、本地/远端历史、未读、已读上报
     chat/send.ts              # 文本 / 图片 / 文件消息发送与失败重试
     chat/upload.ts            # 上传队列：单文件 / 分片 / ETag 续传 / 403 续签
@@ -222,7 +223,7 @@ actions：`login`、`register`、`logout`、`bootstrap`（刷新页面后恢复�
 | `conversations` | `Conversation[]`，按最后消息时间倒序 |
 | `activeConversationID` | 当前会话（路由参数同步） |
 | `messagesByConversation` | `Record<conversationID, MsgData[]>`，按 seq 升序 |
-| `unread` | 未读数：`conversations.unreadCount(conversationID)` 本地推导（不发网络请求），口径为缓存中 `seq > hasReadSeq` 且未撤回的条数；`unreadTotal()` 为全部会话总和 |
+| `unread` | 未读数：`local.unreadCount(conversationID)`（SDK Local 门面）本地推导（不发网络请求），口径为缓存中 `seq > hasReadSeq` 且未撤回的条数；`local.unreadTotal()` 为全部会话总和 |
 | `drafts` | 会话草稿，持久化 localStorage |
 | `sending` | 进行中的发送任务（clientMsgID → 状态） |
 
@@ -378,7 +379,9 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 - 头像与 ≤8MB 附件统一走 `POST /files/presign` 单文件 PUT（`purpose` 分别 `avatar` / `attachment`）；附件 >8MB 走分片，上限 200MB、8MB/片、最多 100 片
 - 对象存储 CORS 已配置，允许浏览器直接 PUT 预签名 URL
 - 群聊能力由 SDK 提供（`GroupMgr`）：建群、群资料、入群申请、成员列表/邀请/踢人/禁言、转让与解散
-- 本地未读：`UnreadCount(conversationID)` / `UnreadTotal()` 不发起网络请求；`hasReadSeq` 取本地已读消息最大 seq，未读数 = 缓存中 `seq > hasReadSeq` 且未撤回的条数。缓存不完整时结果为下界，跨端一致性依赖 2200 已读回执；需要服务端精确值时用 `ConvMgr.GetSortedConversationList`（返回 `unreadTotal` / `unreadCount`），该方法的 js 封装在 P1 补
+- 本地数据统一走 SDK `Local` 门面（只读缓存、owner 由 core 按登录用户解析）：会话 `local.listConversations`（置顶优先 + 时间内倒序、分页）、消息 `local.listMsgs`（seq 游标分页）、未读 `local.unreadCount/unreadTotal`；本地清理用 `local.purgeMsgs` / `local.clearLocalData`（仅本机，不影响服务端）
+- IM token 续期：wasm 无同步回调，采用预取模式——到期前（最多提前 5 分钟、短 TTL 按剩余 20%）调用 `/im/token` 后 `updateToken` 注入，core 在认证失败时消费；后台标签页定时器被节流，故 `visibilitychange` / `online` / 重连前补检。可重试错误按 30s→5min 退避，凭证失效（1002/2004）直接走被动下线流程
+- 本地未读：`local.unreadCount(conversationID)` / `local.unreadTotal()` 不发起网络请求；`hasReadSeq` 取本地已读消息最大 seq，未读数 = 缓存中 `seq > hasReadSeq` 且未撤回的条数。缓存不完整时结果为下界，跨端一致性依赖 2200 已读回执；需要服务端精确值时用 `ConvMgr.GetSortedConversationList`（返回 `unreadTotal` / `unreadCount`），该方法的 js 封装在 P1 补
 - 历史分页：sdk-core 已实现分页拉取；js 侧用 `messages.pullBySeq(conversationID, begin, end, num, order)` 按 seq 区间拉取，向前加载取 `order=1`
 - 注册/登录请求体不含 `deviceId`，设备信息只从 `X-Device-Id` 请求头读取（已实施）
 - `client-config` 304：biz CORS 已返回 `Access-Control-Expose-Headers: ETag`；前端只在 `client-config` 单请求放行 304，命中后返回 localStorage 缓存（按 platform 存储，TTL 24h；schema 缓存 7 天；缓存丢失时去掉条件头回退一次 200）

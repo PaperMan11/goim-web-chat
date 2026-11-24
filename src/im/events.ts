@@ -27,6 +27,8 @@ export type IMBusinessEvent =
   | { type: 'conversations-synced' }
   | { type: 'conversation-deleted'; payload: unknown }
   | { type: 'session-expired'; reason: string }
+  | { type: 'token-refreshed' }
+  | { type: 'token-refresh-failed'; error?: unknown }
   | { type: 'login'; ok: boolean; error?: unknown }
   | { type: 'raw'; event: GoimEvent };
 
@@ -82,6 +84,10 @@ export function translateEvent(
       return [{ type: 'conversation-deleted', payload: event.payload }];
     case EventType.ForceLogout:
       return [{ type: 'session-expired', reason: 'ForceLogout' }];
+    case EventType.TokenRefreshed:
+      return [{ type: 'token-refreshed' }];
+    case EventType.TokenRefreshFailed:
+      return [{ type: 'token-refresh-failed', error: event.payload }];
     case EventType.LoginSuccess:
       return [{ type: 'login', ok: true }];
     case EventType.LoginFailed:

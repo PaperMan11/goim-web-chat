@@ -36,9 +36,13 @@ export function sendMessage(msg: MsgData): Promise<SendMsgResp> {
   return requireIM().messages.send(msg);
 }
 
-// 本地缓存历史（需先等待 EventSyncFinish）
-export function loadLocalMessages(conversationID: string): Promise<MsgData[]> {
-  return requireIM().messages.historyLocal(conversationID);
+// 本地缓存历史：走 Local.ListMsgs，取最新 limit 条（seq 降序，需先等待 EventSyncFinish）
+export async function loadLocalMessages(
+  conversationID: string,
+  limit = 100,
+): Promise<MsgData[]> {
+  const page = await requireIM().local.listMsgs(conversationID, 0, limit);
+  return page.items;
 }
 
 export interface PullHistoryOptions {

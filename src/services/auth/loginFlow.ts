@@ -20,12 +20,27 @@ import {
   subscribeIM,
   waitForSync,
 } from '@/im/client';
+import {
+  ensureIMTokenValid,
+  refreshIMToken,
+  startIMTokenRenewal,
+  stopIMTokenRenewal,
+} from '@/services/auth/imToken';
 import { AuthStage, useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useContactsStore } from '@/stores/contacts';
 import { errorMessage } from '@/utils/error';
 
 let eventsBound = false;
+
+// 登录态不可恢复：停续期 → 清业务态 → 整页回登录页（确保 wasm/runtime 一并重置）
+function expireSession(): void {
+  stopIMTokenRenewal();
+  useAuthStore().reset();
+  useChatStore().reset();
+  useContactsStore().reset();
+  window.location.replace('/login');
+}
 
 function bindIMEvents(): void {
   if (eventsBound) return;
@@ -45,10 +60,19 @@ function bindIMEvents(): void {
           auth.stage = AuthStage.Synced;
         }
         break;
-      case 'message':
+      case 'message': {
         chat.upsertMessages(event.messages);
-        void chat.refreshUnread();
+        // 只刷新消息所属会话的未读，避免每条消息触发全量会话扫描
+        const ids = [
+          ...new Set(
+            event.messages
+              .map((msg) => msg.conversationID)
+              .filter((id): id is string => Boolean(id)),
+          ),
+        ];
+        void chat.refreshUnread(ids);
         break;
+      }
       case 'message-sent':
         chat.markSent(event.resp as SendMsgResp);
         break;
@@ -82,11 +106,15 @@ function bindIMEvents(): void {
         if (!event.ok) auth.imError = 'IM 登录失败';
         break;
       case 'session-expired':
-        auth.reset();
-        chat.reset();
-        useContactsStore().reset();
-        // 被动下线：整页回登录页，确保 wasm/runtime 状态一并重置
-        window.location.replace('/login');
+        expireSession();
+        break;
+      case 'token-refreshed':
+        // SDK 已用宿主注入的 token 完成续期，重排本地到期时间
+        ensureIMTokenValid();
+        break;
+      case 'token-refresh-failed':
+        // SDK 侧续期失败（无可用预取 token），由宿主立即重新兑换
+        void refreshIMToken();
         break;
       default:
         break;
@@ -145,6 +173,8 @@ export async function registerAndLogin(loginName: string, password: string): Pro
 // 用业务后端签发的 IM 凭证登录 SDK；失败时停留在 biz-authenticated，可重试
 export async function startIM(): Promise<void> {
   const auth = useAuthStore();
+  // 重新登录期间先停旧续期，避免旧 token 的定时器干扰
+  stopIMTokenRenewal();
   auth.stage = AuthStage.BizAuthenticated;
   auth.imError = '';
 
@@ -179,6 +209,12 @@ export async function startIM(): Promise<void> {
     auth.imError = errorMessage(err);
     return;
   }
+
+  // 登录成功后启动 IM token 续期：到期前预取并注入 SDK
+  startIMTokenRenewal({
+    expireTimeSeconds: credentials.expireTimeSeconds,
+    onInvalid: () => expireSession(),
+  });
 
   void afterReady();
 }
@@ -219,6 +255,8 @@ export async function retryIM(): Promise<void> {
 }
 
 export async function logoutAccount(): Promise<void> {
+  // 先停续期，避免登出过程中定时器又兑换一次 token
+  stopIMTokenRenewal();
   try {
     await account.logout();
   } catch {

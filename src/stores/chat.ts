@@ -42,9 +42,12 @@ export const useChatStore = defineStore('chat', () => {
     Object.values(unread.value).reduce((sum, n) => sum + (n || 0), 0),
   );
 
+  // 与 Local.ListConversations 一致：置顶优先 + 最后消息时间倒序
   function sortConversations(): void {
     conversations.value.sort(
-      (a, b) => (b.latestMsgSendTime ?? 0) - (a.latestMsgSendTime ?? 0),
+      (a, b) =>
+        Number(b.isPinned ?? false) - Number(a.isPinned ?? false) ||
+        (b.latestMsgSendTime ?? 0) - (a.latestMsgSendTime ?? 0),
     );
   }
 
@@ -119,8 +122,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // 登录后立即用本地缓存渲染，不等同步完成
+  // 并发刷新（连续消息触发多次）时只应用最新一次快照，避免旧摘要覆盖新摘要
+  let cachedLoadSeq = 0;
   async function loadCachedConversations(): Promise<void> {
+    const seq = ++cachedLoadSeq;
     const list = await listLocalConversations();
+    if (seq !== cachedLoadSeq) return;
     if (list.length) upsertConversations(list);
     await refreshUnread();
   }
@@ -152,11 +159,15 @@ export const useChatStore = defineStore('chat', () => {
     if (count !== undefined) unread.value[conversationID] = count;
   }
 
-  async function refreshUnread(): Promise<void> {
+  // 本地未读：传入会话 ID 时只刷新这些（新消息到达避免全量扫描），不传刷新全部
+  async function refreshUnread(conversationIDs?: string[]): Promise<void> {
     if (!isIMLoggedIn()) return;
-    for (const conv of conversations.value) {
-      if (conv.conversationID) await refreshUnreadFor(conv.conversationID);
-    }
+    const ids = conversationIDs?.length
+      ? conversationIDs
+      : conversations.value
+          .map((conv) => conv.conversationID)
+          .filter((id): id is string => Boolean(id));
+    for (const id of ids) await refreshUnreadFor(id);
   }
 
   async function openConversation(conversationID: string): Promise<void> {
