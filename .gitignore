@@ -6,3 +6,4 @@ public/wasm/
 
 # 工具生成的分享包，非源码
 .trae-html-share-packages/
+.screenshots/
