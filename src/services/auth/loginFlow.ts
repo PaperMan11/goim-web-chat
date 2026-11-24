@@ -249,8 +249,11 @@ export async function startIM(): Promise<void> {
 
 async function afterReady(): Promise<void> {
   const auth = useAuthStore();
+  const chat = useChatStore();
   // 先用本地缓存渲染会话，增量同步完成后再由事件刷新
-  void useChatStore().loadCachedConversations();
+  void chat.loadCachedConversations();
+  // 直接刷新在 /chat/:id 时，ChatView 早于登录执行，消息需要在此补载
+  void chat.reloadActiveConversation();
 
   try {
     auth.me = await getMyProfile();

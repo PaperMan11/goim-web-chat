@@ -234,6 +234,19 @@ export const useChatStore = defineStore('chat', () => {
     upsertMessages(list.map((msg) => ({ ...msg, conversationID })));
   }
 
+  // 登录就绪后补载当前会话：直接刷新 /chat/:id 时 ChatView 先于 IM 登录执行，
+  // 首轮本地读取与远端拉取都会失败，需要登录后重试一次
+  async function reloadActiveConversation(): Promise<void> {
+    const conversationID = activeConversationID.value;
+    if (!conversationID) return;
+    if ((messagesByConversation.value[conversationID] ?? []).length) return;
+
+    const list = await loadConversationMessages(conversationID, 20);
+    if (!list.length) return;
+    upsertMessages(list.map((msg) => ({ ...msg, conversationID })));
+    await markActiveRead();
+  }
+
   async function markActiveRead(): Promise<void> {
     const conversationID = activeConversationID.value;
     if (!conversationID || !isPageVisible.value) return;
@@ -315,6 +328,7 @@ export const useChatStore = defineStore('chat', () => {
     refreshUnread,
     refreshUnreadFor,
     openConversation,
+    reloadActiveConversation,
     markActiveRead,
     setDraft,
     reset,
