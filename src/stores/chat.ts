@@ -19,6 +19,7 @@ import {
   isIMLoggedIn,
   listLocalConversations,
   loadConversationMessages,
+  loadMoreConversationHistory,
   markReadUpTo,
 } from '@/services/chat/conversation';
 import { mergeMessages } from '@/utils/message';
@@ -54,6 +55,9 @@ export const useChatStore = defineStore('chat', () => {
   const isPageVisible = ref(document.visibilityState === 'visible');
   // loadConversations 服务端全量会话拉取时的 loading 标记。
   const loading = ref(false);
+  // 上滑加载历史的状态：per-conversation，防重复触发，且记录到底标记
+  const historyLoading = ref<Record<string, boolean>>({});
+  const noMoreHistory = ref<Record<string, boolean>>({});
 
   // 仅从 conversationID 推导最小 Conversation（用于会话还没进本地列表的首聊/调试场景）
   function deriveConversationFromID(conversationID: string): Conversation | undefined {
@@ -237,21 +241,67 @@ export const useChatStore = defineStore('chat', () => {
     activeConversationID.value = conversationID;
     if (messagesByConversation.value[conversationID]) return;
 
-    const list = await loadConversationMessages(conversationID, 20);
+    const list = await loadConversationMessages(conversationID, 100);
     upsertMessages(list.map((msg) => ({ ...msg, conversationID })));
+    // 换会话时重置历史状态，新会话从头翻
+    delete noMoreHistory.value[conversationID];
+    delete historyLoading.value[conversationID];
   }
 
   // 登录就绪后补载当前会话：直接刷新 /chat/:id 时 ChatView 先于 IM 登录执行，
-  // 首轮本地读取与远端拉取都会失败，需要登录后重试一次
+  // 首轮本地读取会失败，需要登录后重试一次
   async function reloadActiveConversation(): Promise<void> {
     const conversationID = activeConversationID.value;
     if (!conversationID) return;
     if ((messagesByConversation.value[conversationID] ?? []).length) return;
 
-    const list = await loadConversationMessages(conversationID, 20);
+    const list = await loadConversationMessages(conversationID, 100);
     if (!list.length) return;
     upsertMessages(list.map((msg) => ({ ...msg, conversationID })));
     await markActiveRead();
+  }
+
+  // 上滑到底部触发历史加载：取当前列表最早一条的 seq 作为 beforeSeq，
+  // prepend 到 messagesByConversation 头部；返回 appended 数量 + 是否到底
+  // 供 MessageList 维持滚动锚点（prepend 后用户看到的那条不能跳）
+  async function loadMoreHistory(
+    conversationID?: string,
+  ): Promise<{ appended: number; noMore: boolean }> {
+    const id = conversationID ?? activeConversationID.value;
+    if (!id) return { appended: 0, noMore: true };
+    if (historyLoading.value[id]) return { appended: 0, noMore: false };
+    if (noMoreHistory.value[id]) return { appended: 0, noMore: true };
+
+    const list = messagesByConversation.value[id] ?? [];
+    const oldestSeq = list.reduce(
+      (min, msg) => Math.min(min, msg.seq ?? Number.MAX_SAFE_INTEGER),
+      Number.MAX_SAFE_INTEGER,
+    );
+    // 当前没有任何带 seq 的消息（首次打开空会话），没有更历史的可翻
+    if (oldestSeq === Number.MAX_SAFE_INTEGER) {
+      noMoreHistory.value[id] = true;
+      return { appended: 0, noMore: true };
+    }
+
+    historyLoading.value[id] = true;
+    try {
+      const { items, noMoreLocal } = await loadMoreConversationHistory(
+        id,
+        oldestSeq,
+        30,
+      );
+      if (items.length) {
+        upsertMessages(items.map((msg) => ({ ...msg, conversationID: id })));
+      }
+      // 本地 hasMore 说有更多，但本次一个都没拿到 → 真的到底了
+      const noMore = noMoreLocal || items.length === 0;
+      if (noMore) noMoreHistory.value[id] = true;
+      return { appended: items.length, noMore };
+    } catch {
+      return { appended: 0, noMore: false };
+    } finally {
+      historyLoading.value[id] = false;
+    }
   }
 
   async function markActiveRead(): Promise<void> {
@@ -303,6 +353,8 @@ export const useChatStore = defineStore('chat', () => {
     unread.value = {};
     drafts.value = {};
     lastMarkedReadSeq.value = {};
+    historyLoading.value = {};
+    noMoreHistory.value = {};
   }
 
   // 浏览器 tab 可见性监听：hidden 期间新消息正常计未读（loginFlow 判断），
@@ -320,6 +372,8 @@ export const useChatStore = defineStore('chat', () => {
     drafts,
     isPageVisible,
     loading,
+    historyLoading,
+    noMoreHistory,
     activeConversation,
     activeMessages,
     totalUnread,
@@ -336,6 +390,7 @@ export const useChatStore = defineStore('chat', () => {
     refreshUnreadFor,
     openConversation,
     reloadActiveConversation,
+    loadMoreHistory,
     scrollToLatestTick,
     requestScrollToLatest,
     markActiveRead,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { SessionType, type MsgData } from '@goim/web-sdk';
 
 import { retryMessage } from '@/services/chat/send';
@@ -17,15 +17,29 @@ const contacts = useContactsStore();
 const container = ref<HTMLDivElement>();
 const error = ref('');
 
+// 上滑加载历史时维持锚点：prepend 历史消息后用户看到的那条不能跳
+// 设为 true 时 watcher 不滚到底、而是恢复 scrollTop
+const isPrependingHistory = ref(false);
+// 触发 prepend 前保存：scrollTop + scrollHeight_old（要保持的绝对值）
+const anchorBottom = ref(0);
+
 function scrollToBottom(): void {
   void nextTick(() => {
     const el = container.value;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    // 图片/多行文本布局可能在本帧后才稳定，下一帧再校准一次
     requestAnimationFrame(() => {
       if (container.value) container.value.scrollTop = container.value.scrollHeight;
     });
+  });
+}
+
+function restoreAnchor(): void {
+  void nextTick(() => {
+    const el = container.value;
+    if (!el) return;
+    // 保持 prepend 前 scrollTop + 距底部的距离之和：用户正看的那条不动
+    el.scrollTop = anchorBottom.value - (el.scrollHeight - el.scrollTop);
   });
 }
 
@@ -47,38 +61,113 @@ async function onRetry(msg: MsgData): Promise<void> {
   }
 }
 
-// 进入/切换会话、消息增减（发送、收到、历史加载）、重复点入同一会话
-// 都滚到最新。用 flush: 'post' 保证在 DOM patch 之后执行。
+// 上滑到顶部附近触发历史加载；prepend 历史后维持滚动锚点
+function handleScroll(): void {
+  const el = container.value;
+  if (!el) return;
+  // 不是新会话/不是从底部自然加载的场景才触发（避免新会话打开时误判）
+  if (el.scrollTop > 40) return;
+  // 正在加载或到底了就跳过
+  if (chat.historyLoading[chat.activeConversationID]) return;
+  if (chat.noMoreHistory[chat.activeConversationID]) return;
+
+  // 记录当前位置锚点：scrollTop + scrollHeight 保持这条线不变，
+  // prepend 后 scrollTop_new = anchorBottom - (scrollHeight_new - scrollTop_new)
+  anchorBottom.value = el.scrollTop + (el.scrollHeight - el.scrollTop);
+
+  isPrependingHistory.value = true;
+  chat.loadMoreHistory().finally(() => {
+    // prepend 后的 watcher 会消费这个 flag
+    setTimeout(() => {
+      isPrependingHistory.value = false;
+    }, 50);
+  });
+}
+
+// 进入/切换会话、消息增减、滚动触发历史都走这里
+// - 新会话 / 主动点会话 → 滚到底部
+// - prepend 历史（isPrependingHistory=true）→ 恢复锚点
+// - 其他 append（收到新消息）→ 仅在用户本来就在底部附近才滚到底
 watch(
   [
     () => chat.activeConversationID,
     () => chat.activeMessages.length,
     () => chat.scrollToLatestTick,
   ],
-  ([id], [prevId]) => {
-    if (id !== prevId) error.value = '';
-    scrollToBottom();
+  ([id, len, tick], [prevId, prevLen, prevTick]) => {
+    if (id !== prevId) {
+      error.value = '';
+      scrollToBottom();
+      return;
+    }
+    if (tick !== prevTick) {
+      scrollToBottom();
+      return;
+    }
+    // 同一会话消息数变了
+    if (len === prevLen) return;
+
+    if (isPrependingHistory.value) {
+      restoreAnchor();
+    } else if (prevLen == null || prevLen === 0) {
+      // 首次加载 / 刷新（之前没消息）：无条件滚到最新
+      scrollToBottom();
+    } else {
+      // 新消息追加到末尾：只在用户本来就在底部附近才自动滚，避免打断历史浏览
+      const el = container.value;
+      if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 60) {
+        scrollToBottom();
+      }
+    }
   },
   { flush: 'post', immediate: true },
 );
 
-const conversationTitle = (): string => {
+onBeforeUnmount(() => {
+  isPrependingHistory.value = false;
+});
+
+const conversationTitle = computed((): string => {
   const conv = chat.activeConversation;
   if (!conv) return '';
   if (conv.conversationType === SessionType.Group) {
     return conv.msgInfo?.groupName || conv.groupID || '(未知群)';
   }
   return contacts.nicknameOf(conv.userID, conv.msgInfo?.senderName) || '(未知会话)';
-};
+});
+
+const showHistoryLoading = computed(
+  () => chat.historyLoading[chat.activeConversationID] && chat.activeMessages.length > 0,
+);
+const showNoMore = computed(
+  () => chat.noMoreHistory[chat.activeConversationID] && chat.activeMessages.length > 0,
+);
 </script>
 
 <template>
   <div class="flex min-h-0 flex-col">
     <div class="border-b border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
-      {{ conversationTitle() }}
+      {{ conversationTitle }}
     </div>
 
-    <div ref="container" class="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3">
+    <div
+      ref="container"
+      @scroll.passive="handleScroll"
+      class="flex-1 space-y-3 overflow-y-auto bg-slate-50 px-4 py-3"
+    >
+      <div
+        v-if="showHistoryLoading"
+        class="flex justify-center text-xs text-slate-400 py-1"
+      >
+        加载更多…
+      </div>
+      <div
+        v-else-if="showNoMore"
+        class="flex justify-center text-xs text-slate-400 py-1"
+      >
+        — 没有更早的消息 —
+      </div>
+
       <EmptyState
         v-if="!chat.activeMessages.length"
         title="暂无消息"

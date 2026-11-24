@@ -4,7 +4,11 @@
 import type { Conversation, MsgData } from '@goim/web-sdk';
 
 import { getIM } from '@/im/client';
-import { loadLocalMessages, markConversationRead, pullHistory } from '@/im/message';
+import {
+  loadLocalMessages,
+  markConversationRead,
+  pullHistory,
+} from '@/im/message';
 
 // IM 是否已登录（以当前用户为准）
 export function isIMLoggedIn(): boolean {
@@ -57,25 +61,58 @@ export async function getUnreadCount(conversationID: string): Promise<number | u
   }
 }
 
-// 打开会话时的历史：本地缓存 + 服务端最新一页，两路失败互不影响
+// 打开会话时：只读本地缓存。SDK 同步完成后本地已含最新窗口（默认 100 条，
+// 足够新会话展示），远端历史由上滑到顶时按需拉取（loadMoreConversationHistory）。
+// 两路解耦避免打开时多一次不必要的网络请求。
 export async function loadConversationMessages(
   conversationID: string,
-  pageSize = 20,
+  limit = 100,
 ): Promise<MsgData[]> {
-  let local: MsgData[] = [];
   try {
-    local = await loadLocalMessages(conversationID);
+    return await loadLocalMessages(conversationID, limit);
   } catch {
-    // 本地缓存不可用时继续拉服务端
+    return [];
+  }
+}
+
+// 上滑到顶时调用：先查本地有没有更早的消息（Local.ListMsgs beforeSeq 分页），
+// 本地返回数不足 pageSize 或 hasMore=true 说明更早的只在服务端 → 再拉远端。
+// 远端结果 SDK 自动落库，后续翻页可全部走本地。
+export async function loadMoreConversationHistory(
+  conversationID: string,
+  beforeSeq: number,
+  pageSize = 30,
+): Promise<{ items: MsgData[]; noMoreLocal: boolean }> {
+  const instance = getIM();
+  if (!instance?.currentUserID) return { items: [], noMoreLocal: true };
+
+  // 1) 先本地分页
+  let localItems: MsgData[] = [];
+  let localHasMore = false;
+  try {
+    const page = await instance.local.listMsgs(conversationID, beforeSeq, pageSize);
+    localItems = page.items;
+    localHasMore = page.hasMore;
+  } catch {
+    // 本地不可用继续远端
   }
 
-  let remote: MsgData[] = [];
-  try {
-    remote = await pullHistory(conversationID, { pageSize });
-  } catch {
-    // 历史拉取失败保留已有缓存
+  // 2) 本地已完整覆盖更早的所有消息 → 直接返回
+  if (!localHasMore) {
+    return { items: localItems, noMoreLocal: true };
   }
-  return [...local, ...remote];
+
+  // 3) 本地不足，远端拉取。SDK 会把结果自动落库，下次翻同一段就走本地
+  let remoteItems: MsgData[] = [];
+  try {
+    remoteItems = await pullHistory(conversationID, { beforeSeq, pageSize });
+  } catch {
+    // 远端失败只保留已有本地
+  }
+
+  // 合并：本地在前（更早），远端在后。同一条可能两边都有，靠 mergeMessages 去重
+  const merged = [...localItems, ...remoteItems];
+  return { items: merged, noMoreLocal: false };
 }
 
 export function markReadUpTo(
