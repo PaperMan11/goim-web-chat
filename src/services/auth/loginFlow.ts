@@ -62,20 +62,47 @@ function bindIMEvents(): void {
         break;
       case 'message': {
         chat.upsertMessages(event.messages);
-        // 只刷新消息所属会话的未读，避免每条消息触发全量会话扫描
-        const ids = [
-          ...new Set(
-            event.messages
-              .map((msg) => msg.conversationID)
-              .filter((id): id is string => Boolean(id)),
-          ),
-        ];
-        void chat.refreshUnread(ids);
+        const activeID = chat.activeConversationID;
+        // 按会话分组：active 会话收到新消息直接 markRead 推到最新，不计未读；
+        // 非 active 会话才去 refreshUnread
+        const otherIDs: string[] = [];
+        let activeMaxSeq = 0;
+        let activeHasMsg = false;
+        for (const msg of event.messages) {
+          if (!msg.conversationID) continue;
+          if (msg.conversationID === activeID) {
+            activeHasMsg = true;
+            activeMaxSeq = Math.max(activeMaxSeq, msg.seq ?? 0);
+          } else {
+            otherIDs.push(msg.conversationID);
+          }
+        }
+        if (otherIDs.length) void chat.refreshUnread(otherIDs);
+        if (activeHasMsg) {
+          // store 层面先清 0，避免 refreshUnread 异步回来造成的闪烁
+          chat.unread[activeID] = 0;
+          // 调 SDK markRead：同步更新本地 IsRead 字段 + 上报已读给服务端
+          void chat.markActiveRead();
+        }
         break;
       }
-      case 'message-sent':
+      case 'message-sent': {
         chat.markSent(event.resp as SendMsgResp);
+        // 自己发消息成功后，该会话未读清 0（core 层已排除 self-sent 计入未读，
+        // 这里再主动清 store 里的缓存，避免极端时序下的脏读）
+        const clientMsgID = (event.resp as SendMsgResp)?.clientMsgID;
+        if (clientMsgID) {
+          for (const list of Object.values(chat.messagesByConversation)) {
+            const m = list.find((x) => x.clientMsgID === clientMsgID);
+            if (m?.conversationID) {
+              chat.unread[m.conversationID] = 0;
+              void chat.refreshUnreadFor(m.conversationID);
+              break;
+            }
+          }
+        }
         break;
+      }
       case 'message-revoked': {
         // 2101 通知 tips（RevokeMsgTips）
         const tip = event.payload as RevokeMsgTips | undefined;

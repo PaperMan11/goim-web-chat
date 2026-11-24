@@ -2,7 +2,16 @@
 
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { MsgStatus, type Conversation, type MsgData, type SendMsgResp } from '@goim/web-sdk';
+import {
+  MsgStatus,
+  SessionType,
+  parseConversationID,
+  type Conversation,
+  type MsgData,
+  type SendMsgResp,
+} from '@goim/web-sdk';
+
+import { useAuthStore } from '@/stores/auth';
 
 import {
   fetchConversations,
@@ -25,16 +34,57 @@ function loadDrafts(): Record<string, string> {
 }
 
 export const useChatStore = defineStore('chat', () => {
+  // 会话列表：来自 SDK local.listConversations（本地优先）或服务端全量刷新，
+  // 会话变更/新消息推送后由 reloadConversations 或 upsertConversations 增量合并。
   const conversations = ref<Conversation[]>([]);
+  // 当前选中的会话 ID，与路由 /chat/:conversationID 双向同步。
   const activeConversationID = ref('');
+  // 消息缓存：按 conversationID 分组，loadConversationMessages / upsertMessages 写入，
+  // 新消息推送与发送回包都走 upsertMessages → mergeMessages 去重合并。
   const messagesByConversation = ref<Record<string, MsgData[]>>({});
+  // 各会话未读数：异步调用 SDK local.unreadCount 填入，是下界（本地不完整时偏小）。
   const unread = ref<Record<string, number>>({});
+  // 草稿：localStorage 持久化，按 conversationID 隔离，Composer 失焦自动保存。
   const drafts = ref<Record<string, string>>(loadDrafts());
+  // loadConversations 服务端全量会话拉取时的 loading 标记。
   const loading = ref(false);
 
-  const activeConversation = computed(() =>
-    conversations.value.find((c) => c.conversationID === activeConversationID.value),
-  );
+  // 仅从 conversationID 推导最小 Conversation（用于会话还没进本地列表的首聊/调试场景）
+  function deriveConversationFromID(conversationID: string): Conversation | undefined {
+    const parsed = parseConversationID(conversationID);
+    if (parsed.kind === 'unknown') return undefined;
+
+    if (parsed.kind === 'c2c' && parsed.userIDs) {
+      const me = useAuthStore().userId;
+      const peer = parsed.userIDs.find((id) => id !== me) ?? parsed.userIDs[0];
+      return {
+        conversationID,
+        conversationType: SessionType.C2C,
+        userID: peer,
+      } as Conversation;
+    }
+    if (
+      (parsed.kind === 'group' || parsed.kind === 'superGroup') &&
+      parsed.groupID
+    ) {
+      return {
+        conversationID,
+        conversationType: SessionType.Group,
+        groupID: parsed.groupID,
+      } as Conversation;
+    }
+    return undefined;
+  }
+
+  const activeConversation = computed<Conversation | undefined>(() => {
+    const id = activeConversationID.value;
+    if (!id) return undefined;
+    const found = conversations.value.find((c) => c.conversationID === id);
+    if (found) return found;
+
+    // 调试/首聊场景：会话还没进本地列表，按 conversationID 推导最小 Conversation
+    return deriveConversationFromID(id);
+  });
   const activeMessages = computed(
     () => messagesByConversation.value[activeConversationID.value] ?? [],
   );

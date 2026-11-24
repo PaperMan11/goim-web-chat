@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { SessionType, type Conversation } from '@goim/web-sdk';
+import {
+  SessionType,
+  buildC2CConversationID,
+  type Conversation,
+} from '@goim/web-sdk';
 
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -62,6 +66,14 @@ function select(item: ConversationItem): void {
   });
 }
 
+// 调试入口：输入对方 userID，构造单聊 conversationID 并跳转
+function startChatWith(): void {
+  const peer = window.prompt('输入对方 userID：');
+  if (!peer?.trim()) return;
+  const conversationID = buildC2CConversationID(auth.userId, peer.trim());
+  void router.push({ name: 'chat-conversation', params: { conversationID } });
+}
+
 async function loadProfiles(): Promise<void> {
   const ids = chat.conversations
     .filter((conv) => conv.conversationType !== SessionType.Group)
@@ -84,7 +96,29 @@ watch(
   <div class="flex h-full flex-col">
     <div class="flex items-center justify-between border-b border-slate-200 px-3 py-2">
       <span class="text-sm font-semibold text-slate-700">会话</span>
-      <span class="text-xs text-slate-400">{{ chat.conversations.length }}</span>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-slate-400">{{ chat.conversations.length }}</span>
+        <button
+          type="button"
+          class="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          title="按 userID 发起单聊（调试）"
+          @click="startChatWith"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="h-4 w-4"
+          >
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <EmptyState
