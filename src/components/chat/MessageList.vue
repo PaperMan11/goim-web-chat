@@ -85,9 +85,11 @@ function handleScroll(): void {
 }
 
 // 进入/切换会话、消息增减、滚动触发历史都走这里
-// - 新会话 / 主动点会话 → 滚到底部
-// - prepend 历史（isPrependingHistory=true）→ 恢复锚点
-// - 其他 append（收到新消息）→ 仅在用户本来就在底部附近才滚到底
+// - 会话切换 / tick 变化 → 滚到底部
+// - prepend 历史（isPrependingHistory=true）→ 恢复锚点（用户看的那条不动）
+// - len 增加（自己发 / 别人推 / 首次加载）→ 无条件滚到底
+//   注：不能用"底部附近才滚"判断，因为 flush:post 时 scrollHeight 已包含新消息，
+//   用户的 scrollTop 却还是加消息前的值，差值大于阈值导致条件恒不成立。
 watch(
   [
     () => chat.activeConversationID,
@@ -104,20 +106,14 @@ watch(
       scrollToBottom();
       return;
     }
-    // 同一会话消息数变了
+    // 同一会话消息数没变：可能只是状态更新（SendSuccess / HasDeleted），不滚
     if (len === prevLen) return;
 
     if (isPrependingHistory.value) {
       restoreAnchor();
-    } else if (prevLen == null || prevLen === 0) {
-      // 首次加载 / 刷新（之前没消息）：无条件滚到最新
-      scrollToBottom();
     } else {
-      // 新消息追加到末尾：只在用户本来就在底部附近才自动滚，避免打断历史浏览
-      const el = container.value;
-      if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 60) {
-        scrollToBottom();
-      }
+      // len 增加（首次加载 / 发送 / 收到推送）→ 滚到底
+      scrollToBottom();
     }
   },
   { flush: 'post', immediate: true },
