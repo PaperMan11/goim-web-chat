@@ -20,7 +20,12 @@ const error = ref('');
 function scrollToBottom(): void {
   void nextTick(() => {
     const el = container.value;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    // 图片/多行文本布局可能在本帧后才稳定，下一帧再校准一次
+    requestAnimationFrame(() => {
+      if (container.value) container.value.scrollTop = container.value.scrollHeight;
+    });
   });
 }
 
@@ -42,11 +47,20 @@ async function onRetry(msg: MsgData): Promise<void> {
   }
 }
 
-watch(() => chat.activeMessages.length, scrollToBottom, { flush: 'post' });
-watch(() => chat.activeConversationID, () => {
-  error.value = '';
-  scrollToBottom();
-});
+// 进入/切换会话、消息增减（发送、收到、历史加载）、重复点入同一会话
+// 都滚到最新。用 flush: 'post' 保证在 DOM patch 之后执行。
+watch(
+  [
+    () => chat.activeConversationID,
+    () => chat.activeMessages.length,
+    () => chat.scrollToLatestTick,
+  ],
+  ([id], [prevId]) => {
+    if (id !== prevId) error.value = '';
+    scrollToBottom();
+  },
+  { flush: 'post', immediate: true },
+);
 
 const conversationTitle = (): string => {
   const conv = chat.activeConversation;

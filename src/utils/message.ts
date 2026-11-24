@@ -80,8 +80,13 @@ function assignDefined(target: MsgData, source: MsgData): void {
 function compareMessages(a: MsgData, b: MsgData): number {
   const aSeq = a.seq ?? 0;
   const bSeq = b.seq ?? 0;
-  if (aSeq !== bSeq) return aSeq - bSeq;
-  return (a.sendTime ?? 0) - (b.sendTime ?? 0);
+  // 无 seq 的是本地乐观消息（发送回包不含 seq），必然最新，排在末尾；
+  // 若按 seq=0 比较会被排到最前面，导致"发出去了却看不到"
+  if (!aSeq || !bSeq) {
+    if (!aSeq && !bSeq) return (a.sendTime ?? 0) - (b.sendTime ?? 0);
+    return aSeq ? -1 : 1;
+  }
+  return aSeq - bSeq;
 }
 
 // 按 serverMsgID / clientMsgID 去重合并，返回排序后的新数组（不修改入参）

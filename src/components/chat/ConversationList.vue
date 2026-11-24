@@ -60,6 +60,8 @@ function previewOf(conv: Conversation): string {
 }
 
 function select(item: ConversationItem): void {
+  // 已在该会话时路由不会变化，主动通知消息区滚到最新
+  chat.requestScrollToLatest();
   void router.push({
     name: 'chat-conversation',
     params: { conversationID: item.conversationID },

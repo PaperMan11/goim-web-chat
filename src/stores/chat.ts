@@ -82,6 +82,13 @@ export const useChatStore = defineStore('chat', () => {
     return undefined;
   }
 
+  // 重复点入同一会话时路由不变、消息数不变，用递增计数通知 MessageList 滚到最新
+  const scrollToLatestTick = ref(0);
+
+  function requestScrollToLatest(): void {
+    scrollToLatestTick.value += 1;
+  }
+
   const activeConversation = computed<Conversation | undefined>(() => {
     const id = activeConversationID.value;
     if (!id) return undefined;
@@ -329,6 +336,8 @@ export const useChatStore = defineStore('chat', () => {
     refreshUnreadFor,
     openConversation,
     reloadActiveConversation,
+    scrollToLatestTick,
+    requestScrollToLatest,
     markActiveRead,
     setDraft,
     reset,
