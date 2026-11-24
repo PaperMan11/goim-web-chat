@@ -75,18 +75,32 @@ export async function loadConversationMessages(
   }
 }
 
-// 上滑到顶时调用：先查本地有没有更早的消息（Local.ListMsgs beforeSeq 分页），
-// 本地返回数不足 pageSize 或 hasMore=true 说明更早的只在服务端 → 再拉远端。
-// 远端结果 SDK 自动落库，后续翻页可全部走本地。
+// 上滑到顶时调用：判定"真·到底"必须同时满足两个条件：
+//   1) 本地 listMsgs 返回 hasMore=false（本地没有更早的了）
+//   2) getConversationSeqs 显示 LocalMinSeq <= ServerMinSeq（本地最早已覆盖服务端最早）
+// 否则无论本地 hasMore 是什么，都从服务端拉 —— 因为 localHasMore=false 只代表
+// "本地没有了"，可能本地只存了后 N 条，服务端前面还有一堆历史。
+// 远端结果 SDK 自动落库，下次翻同一段就走本地。
 export async function loadMoreConversationHistory(
   conversationID: string,
   beforeSeq: number,
   pageSize = 30,
-): Promise<{ items: MsgData[]; noMoreLocal: boolean }> {
+): Promise<{ items: MsgData[]; noMore: boolean }> {
   const instance = getIM();
-  if (!instance?.currentUserID) return { items: [], noMoreLocal: true };
+  if (!instance?.currentUserID) return { items: [], noMore: true };
 
-  // 1) 先本地分页
+  // 0) 先拿会话的 seq 边界：本地 vs 服务端（sync 时已渐进落盘，准）
+  let localMinSeq = 0;
+  let serverMinSeq = 0;
+  try {
+    const seqs = await instance.local.getConversationSeqs(conversationID);
+    localMinSeq = seqs.localMinSeq ?? 0;
+    serverMinSeq = seqs.serverMinSeq ?? 0;
+  } catch {
+    // 拿不到就保守：假装本地不完整，去服务端拉
+  }
+
+  // 1) 先本地分页（快，且翻页后半段大概率命中）
   let localItems: MsgData[] = [];
   let localHasMore = false;
   try {
@@ -97,22 +111,31 @@ export async function loadMoreConversationHistory(
     // 本地不可用继续远端
   }
 
-  // 2) 本地已完整覆盖更早的所有消息 → 直接返回
-  if (!localHasMore) {
-    return { items: localItems, noMoreLocal: true };
+  // 2) 真·到底判定：本地没有更早的 且 本地最早已覆盖服务端最早
+  //    serverMinSeq==0 表示 sync 还没给这个会话标过下界 → 保守认为有更多
+  const trulyNoMore =
+    !localHasMore &&
+    serverMinSeq > 0 &&
+    localMinSeq > 0 &&
+    localMinSeq <= serverMinSeq;
+
+  if (trulyNoMore) {
+    return { items: localItems, noMore: true };
   }
 
-  // 3) 本地不足，远端拉取。SDK 会把结果自动落库，下次翻同一段就走本地
+  // 3) 本地不足 / 服务端可能还有 → 远端拉。SDK 会把结果自动落库，下次翻同一段就走本地
   let remoteItems: MsgData[] = [];
+  let remoteNoMore = false;
   try {
     remoteItems = await pullHistory(conversationID, { beforeSeq, pageSize });
+    remoteNoMore = remoteItems.length === 0;
   } catch {
-    // 远端失败只保留已有本地
+    // 远端失败只保留已有本地；这次不算"到底"，下次还会再试
   }
 
-  // 合并：本地在前（更早），远端在后。同一条可能两边都有，靠 mergeMessages 去重
+  // 合并：本地在前（更早的），远端在后。同一条可能两边都有，靠 mergeMessages 去重
   const merged = [...localItems, ...remoteItems];
-  return { items: merged, noMoreLocal: false };
+  return { items: merged, noMore: remoteNoMore };
 }
 
 export function markReadUpTo(

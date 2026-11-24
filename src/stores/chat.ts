@@ -285,7 +285,7 @@ export const useChatStore = defineStore('chat', () => {
 
     historyLoading.value[id] = true;
     try {
-      const { items, noMoreLocal } = await loadMoreConversationHistory(
+      const { items, noMore } = await loadMoreConversationHistory(
         id,
         oldestSeq,
         30,
@@ -293,8 +293,6 @@ export const useChatStore = defineStore('chat', () => {
       if (items.length) {
         upsertMessages(items.map((msg) => ({ ...msg, conversationID: id })));
       }
-      // 本地 hasMore 说有更多，但本次一个都没拿到 → 真的到底了
-      const noMore = noMoreLocal || items.length === 0;
       if (noMore) noMoreHistory.value[id] = true;
       return { appended: items.length, noMore };
     } catch {
