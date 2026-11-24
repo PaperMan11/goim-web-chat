@@ -24,4 +24,12 @@ GoIM Web 聊天客户端。详细架构、目录树与开发规划见 `docs/ARCH
 ## 生成物与验证
 
 11. `public/wasm/`、`goim-sdk-js/wasm/` 是构建生成物，不手改；更新流程为 sdk-js `npm run build:wasm` → 本项目 `npm run copy:wasm`。
-12. 提交前必须通过 `npm run typecheck` 与 `npm run build`。
+12. 前端提交前必须通过 `npm run typecheck` 与 `npm run build`。
+13. 涉及 Go 侧（`goim-sdk-core`、`goim-business` 等仓库）的改动，提交前必须依次通过 `gofmt -w`、`go build ./...`、`go vet ./...`、`go test ./... -count=1`。
+14. 先保证代码与测试通过，再更新文档与注释；不要先写文档再改代码。
+
+## 提交规范
+
+15. 除非用户明确要求提交，否则不要执行 `git commit` / `git push`。
+16. 提交信息使用 Conventional Commits 前缀 + 中文说明：`feat:` 新功能、`fix:` 修复、`docs:` 文档、`refactor:` 重构、`chore:` 构建/配置/依赖。格式：`<scope>: <中文简述>`。
+17. 每次提交只解决一个主题；若有不相关的改动，拆开或暂存。
