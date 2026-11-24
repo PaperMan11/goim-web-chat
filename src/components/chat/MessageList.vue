@@ -59,7 +59,7 @@ const conversationTitle = (): string => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="flex min-h-0 flex-col">
     <div class="border-b border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
       {{ conversationTitle() }}
     </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { onBeforeRouteLeave, useRoute } from 'vue-router';
 
 import Composer from '@/components/chat/Composer.vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
@@ -17,11 +17,25 @@ const conversationID = computed(() => String(route.params.conversationID ?? ''))
 watch(
   conversationID,
   (id) => {
-    if (!id) return;
+    if (!id) {
+      // /chat/:id → /chat（同组件不触发 unmount），也要清空当前会话
+      chat.activeConversationID = '';
+      return;
+    }
     void openConversation(id);
   },
   { immediate: true },
 );
+
+// 离开会话路由（去通讯录/设置/会话列表）时清空当前会话，
+// 避免后续新消息被误判为"正在查看"而自动已读。
+// 注意用路由守卫而非 onUnmounted：组件因其他原因重建时，
+// 旧实例 unmount 可能晚于新实例设置 activeConversationID，会误清。
+onBeforeRouteLeave((to) => {
+  if (to.name !== 'chat-conversation') {
+    chat.activeConversationID = '';
+  }
+});
 
 async function openConversation(id: string): Promise<void> {
   await chat.openConversation(id);

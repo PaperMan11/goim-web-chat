@@ -46,6 +46,12 @@ export const useChatStore = defineStore('chat', () => {
   const unread = ref<Record<string, number>>({});
   // 草稿：localStorage 持久化，按 conversationID 隔离，Composer 失焦自动保存。
   const drafts = ref<Record<string, string>>(loadDrafts());
+  // 已读上报水位：每个会话上次成功 markReadUpTo 上报到服务端的 seq，
+  // 只有新 seq > 这个水位才再次上报，避免心跳式重复请求。
+  const lastMarkedReadSeq = ref<Record<string, number>>({});
+  // 页面可见性：浏览器 tab 不可见时暂停自动已读（新消息仍计未读），
+  // 恢复可见且仍停留在会话上时补一次 markActiveRead。
+  const isPageVisible = ref(document.visibilityState === 'visible');
   // loadConversations 服务端全量会话拉取时的 loading 标记。
   const loading = ref(false);
 
@@ -230,17 +236,32 @@ export const useChatStore = defineStore('chat', () => {
 
   async function markActiveRead(): Promise<void> {
     const conversationID = activeConversationID.value;
-    if (!conversationID) return;
+    if (!conversationID || !isPageVisible.value) return;
     const lastSeq = activeMessages.value.reduce(
       (max, msg) => Math.max(max, msg.seq ?? 0),
       0,
     );
     if (lastSeq <= 0) return;
+
+    const previous = lastMarkedReadSeq.value[conversationID] ?? 0;
+    // 没有新消息 seq 超过已上报水位，跳过服务端请求
+    if (lastSeq <= previous) {
+      unread.value[conversationID] = 0;
+      return;
+    }
+
+    // 本次新标记已读的 seq 一并上报：服务端对单聊只有收到 seqs 才会落
+    // per-message 已读，否则重新拉取历史会回传 isRead=false，未读复现
+    const seqs = activeMessages.value
+      .filter((msg) => (msg.seq ?? 0) > previous && (msg.seq ?? 0) <= lastSeq)
+      .map((msg) => msg.seq as number);
+
     try {
-      await markReadUpTo(conversationID, lastSeq);
+      await markReadUpTo(conversationID, lastSeq, seqs);
+      lastMarkedReadSeq.value[conversationID] = lastSeq;
       unread.value[conversationID] = 0;
     } catch {
-      // 已读上报失败不阻塞 UI
+      // 已读上报失败不阻塞 UI，下次 markActiveRead 会重试（因为水位还没更新）
     }
   }
 
@@ -261,7 +282,15 @@ export const useChatStore = defineStore('chat', () => {
     messagesByConversation.value = {};
     unread.value = {};
     drafts.value = {};
+    lastMarkedReadSeq.value = {};
   }
+
+  // 浏览器 tab 可见性监听：hidden 期间新消息正常计未读（loginFlow 判断），
+  // visible 恢复且仍停留在会话上时补一次已读上报。
+  document.addEventListener('visibilitychange', () => {
+    isPageVisible.value = document.visibilityState === 'visible';
+    if (isPageVisible.value && activeConversationID.value) void markActiveRead();
+  });
 
   return {
     conversations,
@@ -269,6 +298,7 @@ export const useChatStore = defineStore('chat', () => {
     messagesByConversation,
     unread,
     drafts,
+    isPageVisible,
     loading,
     activeConversation,
     activeMessages,

@@ -70,7 +70,8 @@ function bindIMEvents(): void {
         let activeHasMsg = false;
         for (const msg of event.messages) {
           if (!msg.conversationID) continue;
-          if (msg.conversationID === activeID) {
+          // 仅"正在查看且页面可见"才自动已读；tab 不可见时 active 会话也正常计未读
+          if (msg.conversationID === activeID && chat.isPageVisible) {
             activeHasMsg = true;
             activeMaxSeq = Math.max(activeMaxSeq, msg.seq ?? 0);
           } else {

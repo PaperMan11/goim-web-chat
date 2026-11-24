@@ -78,6 +78,10 @@ export async function loadConversationMessages(
   return [...local, ...remote];
 }
 
-export function markReadUpTo(conversationID: string, hasReadSeq: number): Promise<void> {
-  return markConversationRead(conversationID, hasReadSeq);
+export function markReadUpTo(
+  conversationID: string,
+  hasReadSeq: number,
+  seqs: number[] = [],
+): Promise<void> {
+  return markConversationRead(conversationID, hasReadSeq, seqs);
 }
