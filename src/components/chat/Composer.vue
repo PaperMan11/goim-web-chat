@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 
 import { sendAttachment, sendTextMessage, type AttachmentProgress } from '@/services/chat/send';
 import { useChatStore } from '@/stores/chat';
 import { errorMessage } from '@/utils/error';
 import { ATTACHMENT_MIMES } from '@/api/file/file';
+import { EMOJI_GROUPS, loadRecentEmojis, saveRecentEmoji } from '@/utils/emoji';
 
 const chat = useChatStore();
 const sending = ref(false);
@@ -15,8 +16,14 @@ const uploadProgress = ref<AttachmentProgress>({ bytes: 0, total: 1 });
 const uploadFileName = ref('');
 const abortCtrl = ref<AbortController | null>(null);
 
-// 微信风面板："+"更多面板展开/收起
+// 微信风面板：表情面板 / "+"更多面板 展开收起（互斥，点开一个关掉另一个）
+const showEmoji = ref(false);
 const showPlus = ref(false);
+const activeEmojiGroup = ref('smileys');
+const recentEmojis = ref<string[]>(loadRecentEmojis());
+
+// textarea ref：表情插入时恢复光标位置
+const textareaRef = ref<HTMLTextAreaElement>();
 
 // 隐藏的 file input：图片（image/*）和文件（全量 ATTACHMENT_MIMES）分两个
 const imageInput = ref<HTMLInputElement>();
@@ -45,6 +52,7 @@ async function submit(): Promise<void> {
   error.value = '';
   chat.setDraft('');
   showPlus.value = false;
+  showEmoji.value = false;
   try {
     await sendTextMessage(conv, content);
   } catch (err) {
@@ -64,17 +72,51 @@ function onKeydown(event: KeyboardEvent): void {
 
 function togglePlus(): void {
   showPlus.value = !showPlus.value;
+  if (showPlus.value) showEmoji.value = false;
+}
+
+function toggleEmoji(): void {
+  showEmoji.value = !showEmoji.value;
+  if (showEmoji.value) {
+    showPlus.value = false;
+    // 每次打开刷新最近使用
+    recentEmojis.value = loadRecentEmojis();
+  }
+}
+
+function selectEmoji(emoji: string): void {
+  // 在 textarea 光标位置插入 emoji
+  const ta = textareaRef.value;
+  if (!ta) {
+    draft.value += emoji;
+  } else {
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const before = draft.value.slice(0, start);
+    const after = draft.value.slice(end);
+    draft.value = before + emoji + after;
+    // 恢复光标到插入位置之后
+    nextTick(() => {
+      const pos = start + emoji.length;
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+  // 记录到最近使用
+  recentEmojis.value = saveRecentEmoji(emoji);
 }
 
 function openImagePicker(): void {
   if (!chat.activeConversation || uploading.value) return;
   showPlus.value = false;
+  showEmoji.value = false;
   imageInput.value?.click();
 }
 
 function openFilePicker(): void {
   if (!chat.activeConversation || uploading.value) return;
   showPlus.value = false;
+  showEmoji.value = false;
   fileInput.value?.click();
 }
 
@@ -164,6 +206,61 @@ onBeforeUnmount(() => {
       @change="onFileChange"
     />
 
+    <!-- 表情面板（微信风：分组 tab + 网格 + 最近使用） -->
+    <div
+      v-if="showEmoji"
+      class="border-t border-slate-100 bg-white"
+    >
+      <!-- 分组 tab 栏 -->
+      <div class="flex items-center gap-1 border-b border-slate-100 px-2 py-1.5">
+        <button
+          v-for="group in EMOJI_GROUPS"
+          :key="group.id"
+          type="button"
+          class="rounded px-2 py-1 text-base hover:bg-slate-100"
+          :class="{ 'bg-slate-200': activeEmojiGroup === group.id }"
+          :title="group.id"
+          @click="activeEmojiGroup = group.id"
+        >
+          {{ group.label }}
+        </button>
+        <div class="ml-auto text-[11px] text-slate-400">
+          点击插入，Enter 发送
+        </div>
+      </div>
+
+      <!-- 最近使用 -->
+      <div v-if="recentEmojis.length > 0" class="px-3 pt-2 pb-1.5">
+        <div class="mb-1 text-[11px] text-slate-400">最近使用</div>
+        <div class="grid grid-cols-10 gap-0.5">
+          <button
+            v-for="(emoji, i) in recentEmojis"
+            :key="'recent-' + i + '-' + emoji"
+            type="button"
+            class="rounded p-1 text-xl leading-none hover:bg-slate-100"
+            @click="selectEmoji(emoji)"
+          >{{ emoji }}</button>
+        </div>
+      </div>
+
+      <!-- 当前分组 -->
+      <div
+        class="max-h-48 overflow-y-auto px-3 pb-3"
+        :class="recentEmojis.length > 0 ? 'border-t border-slate-100 pt-2' : 'pt-2'"
+      >
+        <div class="grid grid-cols-10 gap-0.5">
+          <button
+            v-for="(emoji, i) in EMOJI_GROUPS.find(g => g.id === activeEmojiGroup)?.emojis ?? []"
+            :key="activeEmojiGroup + '-' + i + '-' + emoji"
+            type="button"
+            class="rounded p-1 text-xl leading-none hover:bg-slate-100"
+            :title="emoji"
+            @click="selectEmoji(emoji)"
+          >{{ emoji }}</button>
+        </div>
+      </div>
+    </div>
+
     <!-- + 更多面板（微信风圆角网格，展开时插入在工具栏上方） -->
     <div
       v-if="showPlus"
@@ -226,12 +323,14 @@ onBeforeUnmount(() => {
     <div class="flex items-end gap-2 px-3 py-2">
       <!-- 工具栏按钮组（左）：表情 + 语音占位 + + -->
       <div class="flex items-center gap-1">
-        <!-- 表情按钮（后续实现表情面板） -->
+        <!-- 表情按钮 -->
         <button
           type="button"
           title="表情"
           :disabled="!chat.activeConversation"
           class="rounded-lg px-2 py-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-40"
+          :class="{ 'bg-slate-200': showEmoji }"
+          @click="toggleEmoji"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
         </button>
@@ -261,6 +360,7 @@ onBeforeUnmount(() => {
 
       <!-- textarea：全宽，紧贴工具栏 -->
       <textarea
+        ref="textareaRef"
         v-model="draft"
         rows="1"
         placeholder="输入消息"
