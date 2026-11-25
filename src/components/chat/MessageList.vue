@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { SessionType, type MsgData } from '@goim/web-sdk';
 
 import { retryMessage } from '@/services/chat/send';
@@ -18,29 +18,53 @@ const container = ref<HTMLDivElement>();
 const error = ref('');
 
 // 上滑加载历史时维持锚点：prepend 历史消息后用户看到的那条不能跳
-// 设为 true 时 watcher 不滚到底、而是恢复 scrollTop
 const isPrependingHistory = ref(false);
-// 触发 prepend 前保存：scrollTop + scrollHeight_old（要保持的绝对值）
-const anchorBottom = ref(0);
-
-function scrollToBottom(): void {
-  void nextTick(() => {
-    const el = container.value;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-    requestAnimationFrame(() => {
-      if (container.value) container.value.scrollTop = container.value.scrollHeight;
-    });
-  });
-}
+const anchorScrollTop = ref(0);
+const anchorScrollHeight = ref(0);
+// 首次滚到底完成前，handleScroll 不触发——初始 scrollTop=0 会被误判为"滑到顶"
+const initialScrollDone = ref(false);
 
 function restoreAnchor(): void {
   void nextTick(() => {
     const el = container.value;
     if (!el) return;
-    // 保持 prepend 前 scrollTop + 距底部的距离之和：用户正看的那条不动
-    el.scrollTop = anchorBottom.value - (el.scrollHeight - el.scrollTop);
+    const delta = el.scrollHeight - anchorScrollHeight.value;
+    el.scrollTop = anchorScrollTop.value + delta;
   });
+}
+
+// ———— 核心：强制滚到底部（rAF 循环覆盖所有异步干扰）————
+// 刷新时可能有 N 种异步因素让容器尺寸在"看似稳定"之后继续变化：
+//   - Composer 用新布局（表情面板占位、上传进度条预留空间）高度变化
+//   - IM 连接状态 banner 出现/消失，整个 ChatLayout 重新分配空间
+//   - 图片气泡从 h-32 占位 → 真实尺寸（异步：getFileURL → 换签 → <img> 加载完）
+//   - 浏览器 scroll restoration（刷新后恢复上次 scrollTop）
+//   - 字体 / CSS transition 异步生效
+//
+// 单次 scrollTop = scrollHeight 只能搞定当下时刻，之后任何变化都会把位置顶上去。
+// 解决方案：requestAnimationFrame 循环，每帧强制 scrollTop = scrollHeight，
+// 持续 DURATION_MS 毫秒，覆盖所有上述异步场景。
+let bottomForceRafId: number | null = null;
+
+function forceBottom(durationMs = 1500): void {
+  if (bottomForceRafId !== null) {
+    cancelAnimationFrame(bottomForceRafId);
+    bottomForceRafId = null;
+  }
+  const start = performance.now();
+  const frame = (now: number) => {
+    const el = container.value;
+    if (el && !isPrependingHistory.value) {
+      el.scrollTop = el.scrollHeight;
+    }
+    if (now - start < durationMs) {
+      bottomForceRafId = requestAnimationFrame(frame);
+    } else {
+      bottomForceRafId = null;
+      initialScrollDone.value = true;
+    }
+  };
+  bottomForceRafId = requestAnimationFrame(frame);
 }
 
 function isMine(msg: MsgData): boolean {
@@ -65,31 +89,22 @@ async function onRetry(msg: MsgData): Promise<void> {
 function handleScroll(): void {
   const el = container.value;
   if (!el) return;
-  // 不是新会话/不是从底部自然加载的场景才触发（避免新会话打开时误判）
+  if (!initialScrollDone.value) return;
   if (el.scrollTop > 40) return;
-  // 正在加载或到底了就跳过
   if (chat.historyLoading[chat.activeConversationID]) return;
   if (chat.noMoreHistory[chat.activeConversationID]) return;
 
-  // 记录当前位置锚点：scrollTop + scrollHeight 保持这条线不变，
-  // prepend 后 scrollTop_new = anchorBottom - (scrollHeight_new - scrollTop_new)
-  anchorBottom.value = el.scrollTop + (el.scrollHeight - el.scrollTop);
+  anchorScrollTop.value = el.scrollTop;
+  anchorScrollHeight.value = el.scrollHeight;
 
   isPrependingHistory.value = true;
   chat.loadMoreHistory().finally(() => {
-    // prepend 后的 watcher 会消费这个 flag
     setTimeout(() => {
       isPrependingHistory.value = false;
     }, 50);
   });
 }
 
-// 进入/切换会话、消息增减、滚动触发历史都走这里
-// - 会话切换 / tick 变化 → 滚到底部
-// - prepend 历史（isPrependingHistory=true）→ 恢复锚点（用户看的那条不动）
-// - len 增加（自己发 / 别人推 / 首次加载）→ 无条件滚到底
-//   注：不能用"底部附近才滚"判断，因为 flush:post 时 scrollHeight 已包含新消息，
-//   用户的 scrollTop 却还是加消息前的值，差值大于阈值导致条件恒不成立。
 watch(
   [
     () => chat.activeConversationID,
@@ -99,28 +114,39 @@ watch(
   ([id, len, tick], [prevId, prevLen, prevTick]) => {
     if (id !== prevId) {
       error.value = '';
-      scrollToBottom();
+      initialScrollDone.value = false;
+      isPrependingHistory.value = false;
+      forceBottom();
       return;
     }
     if (tick !== prevTick) {
-      scrollToBottom();
+      forceBottom();
       return;
     }
-    // 同一会话消息数没变：可能只是状态更新（SendSuccess / HasDeleted），不滚
     if (len === prevLen) return;
 
     if (isPrependingHistory.value) {
       restoreAnchor();
     } else {
-      // len 增加（首次加载 / 发送 / 收到推送）→ 滚到底
-      scrollToBottom();
+      forceBottom();
     }
   },
   { flush: 'post', immediate: true },
 );
 
+onMounted(() => {
+  // 禁用浏览器 scroll restoration，避免刷新时恢复页面级/容器级 scrollTop
+  if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
+  }
+});
+
 onBeforeUnmount(() => {
   isPrependingHistory.value = false;
+  if (bottomForceRafId !== null) {
+    cancelAnimationFrame(bottomForceRafId);
+    bottomForceRafId = null;
+  }
 });
 
 const conversationTitle = computed((): string => {
