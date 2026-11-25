@@ -351,24 +351,24 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 - [x] `im/` 适配层：单例、事件映射、`loginWithToken`
 - [x] `stores/auth` + `services/auth/loginFlow`：登录状态机
 - [x] `stores/chat` + `services/chat/send`：会话、消息收发、乐观合并、已读
-- [x] 历史消息分页：`messages.pullBySeq`（seq 区间 + `num` + `order`）向前/向后加载
-- [ ] `services/chat/upload`：单文件 PUT + 分片 + 续签 + 断点
+- [x] 历史消息分页：**本地优先 + 按需远端翻页** —— 打开会话只读 `local.listMsgs(0, 100)`；上滑到顶先 `local.listMsgs(beforeSeq)` 本地分页，再用 `getConversationSeqs` 判真·到底（`LocalMinSeq <= ServerMinSeq` 才是全齐），本地缺口时 `pullHistory({ beforeSeq })` 远端拉取；prepend 后维持滚动锚点
+- [ ] `services/chat/upload`：单文件 PUT + 分片 + 续签 + 断点（API 契约 `presignFile` / `presignMultipart` / `completeMultipart` 已写在 `api/file/file.ts`，服务层、UploadProgress 组件、Composer 附件入口均未落地）
 - [x] 视图：LoginView、ChatView（三栏）、ContactsView 骨架
 - [x] 断线重连与手动重连入口
 
 ### P1 完整账号与资料
 
-- [ ] `/account/sessions`、revoke、password、`/devices`
-- [ ] 资料编辑与头像上传（`purpose=avatar`）
-- [ ] `profile/users/{userId}` 详情、`im/retry`
-- [ ] 草稿、会话置顶
+- [ ] `/account/sessions`、revoke、password、`/devices`（API 契约未写，store/UI 全无）
+- [ ] 资料编辑与头像上传（`purpose=avatar`）：`updateMyProfile` + `/files/presign` + Composer 头像入口
+- [ ] `profile/users/{userId}` 详情页；`im/retry` 的 service 层封装（SettingsView 与 ChatLayout 已有「重试 IM 连接」按钮，但直调 `imRetry` 而非 `retryIM` service）
+- [ ] 草稿（`chat.drafts` 字段 + localStorage 已实现，Composer 未读写）、会话置顶（SDK `isPinned` 字段已存本地，ConversationItem 未显示置顶图标/未提供置顶/取消置顶操作）
 
 ### P2 增强
 
-- [ ] `client-config` + schema（契约已实现，待接入 settings store 与 UI）
+- [ ] `client-config` + schema（API 契约已写，待接入 settings store 与 SettingsView UI）
 - [ ] 账号注销（`DELETE /account`）
-- [ ] 群聊管理：`getJoinedGroupList` 群列表、`getGroupMembersInfo` / `getGroupMemberList` 成员、建群与邀请/踢人、禁言、转让/退群/解散、入群申请处理
-- [ ] 消息搜索、撤回 UI
+- [ ] 群聊管理：SDK `GroupMgr` 能力完备（建群、群资料、入群申请、成员列表/邀请/踢人/禁言、转让与解散），但 `stores/chat` 未暴露群 action、视图无群列表入口、群聊消息 `ConversationType.Group` 下气泡也没显示群成员昵称
+- [ ] 消息撤回 UI（SDK `messages.revoke` + store `markRevoked` 已实现，`MsgStatus.HasDeleted` 状态存在但 MessageBubble 无撤回视觉、无长按菜单入口）、消息搜索
 
 ## 14. 待确认与风险
 

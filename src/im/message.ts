@@ -13,14 +13,33 @@ import {
 import { requireIM } from './client';
 
 // 图片消息 content（JSON 字符串写入 MsgData.content）
-// 只存对象 key 等元数据；访问地址需按 fileId 现换（15 分钟有效），不要持久化 URL
+// 协议 PictureContent 结构：{ origPictureElem: { url, width, height, fileSize, type } }
+// 扩展字段 fileId / objectKey 由前端自行加，服务端透传；展示时优先用 fileId 现换 URL
 export interface ImageMessageContent {
   fileId: string;
   objectKey: string;
-  mime: string;
-  size: number;
-  width?: number;
-  height?: number;
+  origPictureElem: {
+    url?: string;
+    width?: number;
+    height?: number;
+    fileSize?: number;
+    type?: string;
+  };
+}
+
+// 文件消息 content（ContentType.File 105）
+// 协议 FileContent：{ filePath, fileName, fileSize, baseInfo }
+// 同样额外带 fileId / objectKey（服务端透传，展示时现换 URL）
+export interface FileMessageContent {
+  fileId: string;
+  objectKey: string;
+  filePath?: string;
+  fileName?: string;
+  fileSize?: number;
+  mime?: string;
+  baseInfo?: {
+    description?: string;
+  };
 }
 
 export function sendText(
@@ -123,7 +142,7 @@ function applyTarget(msg: MsgData, target: SendTarget): void {
   }
 }
 
-// 构造图片消息（content 为 ImageMessageContent 的 JSON 字符串）
+// 构造图片消息（content 为 ImageMessageContent 的 JSON 字符串，遵循 PictureContent 协议结构）
 export function buildImageMessage(
   target: SendTarget,
   image: ImageMessageContent,
@@ -136,7 +155,7 @@ export function buildImageMessage(
     sendID: instance.requireUserID(),
     senderPlatformID: instance.platformID,
     msgFrom: MsgFrom.User,
-    contentType: ContentType.Image,
+    contentType: ContentType.Picture,
     content: JSON.stringify(image),
     createTime: now,
     sendTime: now,
@@ -144,6 +163,64 @@ export function buildImageMessage(
   };
   applyTarget(msg, target);
   return msg;
+}
+
+// 构造文件消息（content 为 FileMessageContent 的 JSON 字符串，遵循 FileContent 协议结构）
+export function buildFileMessage(
+  target: SendTarget,
+  file: FileMessageContent,
+  opts: { clientMsgID?: string } = {},
+): MsgData {
+  const instance = requireIM();
+  const now = Date.now();
+  const msg: MsgData = {
+    clientMsgID: opts.clientMsgID ?? newClientMsgID(),
+    sendID: instance.requireUserID(),
+    senderPlatformID: instance.platformID,
+    msgFrom: MsgFrom.User,
+    contentType: ContentType.File,
+    content: JSON.stringify(file),
+    createTime: now,
+    sendTime: now,
+    status: MsgStatus.Sending,
+  };
+  applyTarget(msg, target);
+  return msg;
+}
+
+// 解析图片消息 content（兼容新老结构，老结构里 fileId/objectKey 在顶层）
+export function parseImageContent(raw?: string): ImageMessageContent | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // 新结构
+    if (typeof parsed.fileId === 'string') {
+      return parsed as unknown as ImageMessageContent;
+    }
+    // 老结构（顶层 mime/size/width/height，无 origPictureElem）
+    return {
+      fileId: (parsed.fileId as string) ?? '',
+      objectKey: (parsed.objectKey as string) ?? '',
+      origPictureElem: {
+        fileSize: parsed.size as number | undefined,
+        type: parsed.mime as string | undefined,
+        width: parsed.width as number | undefined,
+        height: parsed.height as number | undefined,
+      },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+// 解析文件消息 content（FileContent 协议）
+export function parseFileContent(raw?: string): FileMessageContent | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as FileMessageContent;
+  } catch {
+    return undefined;
+  }
 }
 
 // 合并逻辑见 @/utils/message 的 mergeMessages（纯数据处理，不依赖 SDK 实例）
