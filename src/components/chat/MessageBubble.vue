@@ -39,9 +39,11 @@ const plainText = computed(() => messageText(props.msg));
 // ———— 懒加载 URL（Picture / File 都需要）——
 const mediaUrl = ref<string>();
 const mediaLoading = ref(false);
+const mediaError = ref(false);
 let urlFetchedFor: string | null = null; // 防止重复调
 
 async function fetchMediaUrl(): Promise<void> {
+  mediaError.value = false;
   const content = parseImageContent(props.msg.content) ?? parseFileContent(props.msg.content);
   const fileId = content?.fileId;
   if (!fileId) {
@@ -59,7 +61,7 @@ async function fetchMediaUrl(): Promise<void> {
     const resp = await getFileURL(fileId);
     mediaUrl.value = resp.url;
   } catch {
-    // 失败不阻塞，气泡还是显示占位
+    mediaError.value = true;
   } finally {
     mediaLoading.value = false;
   }
@@ -93,6 +95,34 @@ function onImageError(): void {
   // URL 可能过期，清理后下次 watcher 或用户刷新时会重新换
   mediaUrl.value = undefined;
   urlFetchedFor = null;
+  mediaError.value = true;
+}
+
+// 下载按钮点击：先换最新 URL（避免 15 分钟过期），再 fetch → Blob → 强制下载
+async function asyncDownload(): Promise<void> {
+  const content = fileContent.value;
+  if (!content?.fileId || !content.fileName) return;
+
+  // 无论 mediaUrl 有没有，都重新换一次（点击时 URL 可能已过期）
+  mediaLoading.value = true;
+  mediaError.value = false;
+  try {
+    const resp = await getFileURL(content.fileId);
+    const blob = await fetch(resp.url).then((r) => r.blob());
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = content.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    mediaUrl.value = resp.url;
+  } catch {
+    mediaError.value = true;
+  } finally {
+    mediaLoading.value = false;
+  }
 }
 
 // 图片自然尺寸
@@ -117,10 +147,6 @@ const imageStyle = computed(() => {
     </span>
 
     <!-- 图片消息 -->
-    <a
-      v-if="isPicture"
-      v-show="false"
-    />
     <div
       v-if="isPicture"
       class="overflow-hidden rounded-xl"
@@ -141,10 +167,6 @@ const imageStyle = computed(() => {
     </div>
 
     <!-- 文件消息 -->
-    <a
-      v-else-if="isFile"
-      v-show="false"
-    />
     <div
       v-else-if="isFile"
       class="max-w-[70%] rounded-xl px-3 py-2 text-sm"
@@ -165,17 +187,18 @@ const imageStyle = computed(() => {
             {{ fileContent?.fileSize ? formatBytes(fileContent.fileSize) : '' }}
           </div>
         </div>
-        <a
-          v-if="mediaUrl"
-          :href="mediaUrl"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="shrink-0 rounded px-2 py-0.5 text-xs"
+        <!-- 下载按钮：始终可见，三态（加载中 / 下载 / 重试），点击时现换 URL + fetch→Blob 强制下载 -->
+        <button
+          type="button"
+          class="shrink-0 rounded px-2 py-0.5 text-xs disabled:opacity-50"
           :class="mine ? 'bg-blue-500 hover:bg-blue-400' : 'bg-slate-100 hover:bg-slate-200'"
-          @click.stop
+          :disabled="mediaLoading"
+          @click.stop="asyncDownload"
         >
-          下载
-        </a>
+          <span v-if="mediaLoading">加载中…</span>
+          <span v-else-if="mediaError">重试</span>
+          <span v-else>下载</span>
+        </button>
       </div>
     </div>
 
