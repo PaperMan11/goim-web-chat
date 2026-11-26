@@ -121,6 +121,18 @@ export function revokeMessage(conversationID: string, seq: number): Promise<void
   return requireIM().messages.revoke(conversationID, seq);
 }
 
+// 删除消息：默认仅自己不可见；syncOther=true 为「对所有人删除」（群管理员）
+export function deleteMessages(
+  conversationID: string,
+  seqs: number[],
+  opt: { syncSelf?: boolean; syncOther?: boolean } = {},
+): Promise<void> {
+  return requireIM().messages.delete(conversationID, seqs, {
+    isSyncSelf: opt.syncSelf ?? true,
+    isSyncOther: opt.syncOther ?? false,
+  });
+}
+
 // ———— 构造乐观消息 ————
 
 function newClientMsgID(): string {

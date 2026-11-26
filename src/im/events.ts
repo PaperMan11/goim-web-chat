@@ -22,6 +22,7 @@ export type IMBusinessEvent =
   | { type: 'message'; messages: MsgData[] }
   | { type: 'message-sent'; resp: SendMsgResp }
   | { type: 'message-revoked'; payload: unknown }
+  | { type: 'message-deleted'; payload: unknown }
   | { type: 'read'; payload: unknown }
   | { type: 'conversation'; payload: unknown }
   | { type: 'conversations-synced' }
@@ -73,6 +74,8 @@ export function translateEvent(
     case EventType.RevokeMsg:
     case EventType.MsgRevoked:
       return [{ type: 'message-revoked', payload: event.payload }];
+    case EventType.DeleteMsgs:
+      return [{ type: 'message-deleted', payload: event.payload }];
     case EventType.MarkAsRead:
       return [{ type: 'read', payload: event.payload }];
     case EventType.ConversationUpdate:

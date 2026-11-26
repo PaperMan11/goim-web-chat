@@ -12,6 +12,14 @@ type MessageLike = Pick<MsgData, 'contentType' | 'content'>;
 
 // 单条消息的纯文本展示（图片/文件等返回占位文案）
 export function messageText(msg?: MessageLike): string {
+  // 撤回后 SDK 会把摘要 content 清空、contentType 改写为 111 Revoke，
+  // 必须先按类型判定，不能依赖 content 非空（否则会话列表摘要显示为空）
+  if (
+    msg?.contentType === ContentType.Revoke ||
+    msg?.contentType === ContentType.MsgRevokeNotification
+  ) {
+    return '[已撤回]';
+  }
   const content = msg?.content;
   if (!content) return '';
   switch (msg?.contentType) {
@@ -30,8 +38,6 @@ export function messageText(msg?: MessageLike): string {
     case ContentType.Card:
     case ContentType.Merger:
       return messagePlaceholder(msg!.contentType, content);
-    case ContentType.Revoke:
-      return '[已撤回]';
     default:
       return content;
   }

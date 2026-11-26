@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import {
+  ContentType,
   MsgStatus,
   SessionType,
   parseConversationID,
@@ -14,7 +15,6 @@ import {
 import { useAuthStore } from '@/stores/auth';
 
 import {
-  fetchConversations,
   getUnreadCount,
   isIMLoggedIn,
   listLocalConversations,
@@ -35,8 +35,8 @@ function loadDrafts(): Record<string, string> {
 }
 
 export const useChatStore = defineStore('chat', () => {
-  // 会话列表：来自 SDK local.listConversations（本地优先）或服务端全量刷新，
-  // 会话变更/新消息推送后由 reloadConversations 或 upsertConversations 增量合并。
+  // 会话列表：来自 SDK local.listConversations（纯本地读取），
+  // 会话变更/新消息推送后由 loadCachedConversations 或 upsertConversations 增量合并。
   const conversations = ref<Conversation[]>([]);
   // 当前选中的会话 ID，与路由 /chat/:conversationID 双向同步。
   const activeConversationID = ref('');
@@ -53,8 +53,6 @@ export const useChatStore = defineStore('chat', () => {
   // 页面可见性：浏览器 tab 不可见时暂停自动已读（新消息仍计未读），
   // 恢复可见且仍停留在会话上时补一次 markActiveRead。
   const isPageVisible = ref(document.visibilityState === 'visible');
-  // loadConversations 服务端全量会话拉取时的 loading 标记。
-  const loading = ref(false);
   // 上滑加载历史的状态：per-conversation，防重复触发，且记录到底标记
   const historyLoading = ref<Record<string, boolean>>({});
   const noMoreHistory = ref<Record<string, boolean>>({});
@@ -180,44 +178,48 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 撤回通知：SDK 已更新本地缓存，这里同步内存中对应消息的状态
-  function markRevoked(conversationID: string, seq: number): void {
+  // 撤回通知（2101）：消息保留，标记 status=4 并把 contentType 改写为 111 Revoke，
+  // 让「撤回」在数据层有独立标识（删除走 markDeleted 直接移除行，不共享此路径）。
+  // 会话摘要由 SDK 侧按本地最新消息重算并发 EventConversationUpdate，宿主无需关心。
+  function markRevoked(conversationID: string, seq: number, clientMsgID?: string): void {
     const list = messagesByConversation.value[conversationID];
     if (!list) return;
-    const index = list.findIndex((msg) => msg.seq === seq);
-    if (index >= 0) list[index] = { ...list[index], status: MsgStatus.HasDeleted };
+    const index = list.findIndex(
+      (msg) =>
+        (seq > 0 && msg.seq === seq) || Boolean(clientMsgID && msg.clientMsgID === clientMsgID),
+    );
+    if (index < 0) return;
+    list[index] = {
+      ...list[index],
+      status: MsgStatus.HasDeleted,
+      contentType: ContentType.Revoke,
+      content: '已撤回',
+    };
   }
 
-  // 登录后立即用本地缓存渲染，不等同步完成
-  // 并发刷新（连续消息触发多次）时只应用最新一次快照，避免旧摘要覆盖新摘要
+  // 删除通知（2102）/ 主动删除：SDK 已把对应行从本地库物理删除，这里同步移除内存消息。
+  // 与撤回（2101，保留行并标记 status=4 展示「撤回了一条消息」）不同，删除不保留占位。
+  function markDeleted(conversationID: string, seqs: number[]): void {
+    const targets = new Set(seqs);
+    const list = messagesByConversation.value[conversationID];
+    if (!list?.length) return;
+    messagesByConversation.value[conversationID] = list.filter(
+      (msg) => !(msg.seq && targets.has(msg.seq as number)),
+    );
+  }
+
+  // 只读本地缓存渲染会话列表：全量数据由 SDK 同步负责落库，
+  // 登录后 / 同步完成 / 会话变更事件都走这里重新读本地。
+  // 并发刷新（连续消息触发多次）时只应用最新一次快照，避免旧摘要覆盖新摘要。
+  // conversationIDs 是本次变更的会话（1300 / SDK 摘要刷新事件携带），只用来
+  // 收窄未读刷新范围；列表仍整体重读，保证新建会话与置顶/时间重排正确。
   let cachedLoadSeq = 0;
-  async function loadCachedConversations(): Promise<void> {
+  async function loadCachedConversations(conversationIDs?: string[]): Promise<void> {
     const seq = ++cachedLoadSeq;
     const list = await listLocalConversations();
     if (seq !== cachedLoadSeq) return;
     if (list.length) upsertConversations(list);
-    await refreshUnread();
-  }
-
-  // 同步完成 / 会话变更后刷新本地；本地为空（首次登录）时回退服务端全量
-  async function reloadConversations(): Promise<void> {
-    await loadCachedConversations();
-    if (!conversations.value.length) await loadConversations();
-  }
-
-  // 服务端全量会话（手动刷新或本地为空兜底）
-  async function loadConversations(): Promise<void> {
-    if (!isIMLoggedIn()) return;
-    loading.value = true;
-    try {
-      const list = await fetchConversations();
-      if (list.length || !conversations.value.length) {
-        upsertConversations(list);
-      }
-      await refreshUnread();
-    } finally {
-      loading.value = false;
-    }
+    await refreshUnread(conversationIDs);
   }
 
   // SDK 本地未读：不发网络请求，缓存不完整时结果为下界
@@ -248,12 +250,12 @@ export const useChatStore = defineStore('chat', () => {
     delete historyLoading.value[conversationID];
   }
 
-  // 登录就绪后补载当前会话：直接刷新 /chat/:id 时 ChatView 先于 IM 登录执行，
-  // 首轮本地读取会失败，需要登录后重试一次
-  async function reloadActiveConversation(): Promise<void> {
+  // 重读当前会话的本地最新窗口并按 clientMsgID 合并进内存：
+  // 用于登录就绪 / 同步完成 / 断线重连（离线消息已由 SDK 落本地，但同步过程
+  // 不逐条推送 NewMsg）。合并幂等，重复调用不会产生重复消息。
+  async function refreshActiveConversation(): Promise<void> {
     const conversationID = activeConversationID.value;
     if (!conversationID) return;
-    if ((messagesByConversation.value[conversationID] ?? []).length) return;
 
     const list = await loadConversationMessages(conversationID, 100);
     if (!list.length) return;
@@ -369,7 +371,6 @@ export const useChatStore = defineStore('chat', () => {
     unread,
     drafts,
     isPageVisible,
-    loading,
     historyLoading,
     noMoreHistory,
     activeConversation,
@@ -381,13 +382,12 @@ export const useChatStore = defineStore('chat', () => {
     markSent,
     markFailed,
     markRevoked,
+    markDeleted,
     loadCachedConversations,
-    reloadConversations,
-    loadConversations,
     refreshUnread,
     refreshUnreadFor,
     openConversation,
-    reloadActiveConversation,
+    refreshActiveConversation,
     loadMoreHistory,
     scrollToLatestTick,
     requestScrollToLatest,

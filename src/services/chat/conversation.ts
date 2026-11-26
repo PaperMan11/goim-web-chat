@@ -39,17 +39,6 @@ export async function listLocalConversations(): Promise<Conversation[]> {
   return all;
 }
 
-// 服务端全量会话（仅本地为空时兜底，或手动刷新）
-export async function fetchConversations(): Promise<Conversation[]> {
-  const instance = getIM();
-  if (!instance?.currentUserID) return [];
-  try {
-    return await instance.conversations.getAll();
-  } catch {
-    return [];
-  }
-}
-
 // 本地未读数（Local.UnreadCount 本地推导；缓存不完整时为下界）
 export async function getUnreadCount(conversationID: string): Promise<number | undefined> {
   const instance = getIM();

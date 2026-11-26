@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { SessionType, type MsgData } from '@goim/web-sdk';
 
 import { retryMessage } from '@/services/chat/send';
+import { revokeChatMessage } from '@/services/chat/revoke';
+import { deleteChatMessage } from '@/services/chat/delete';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useContactsStore } from '@/stores/contacts';
@@ -80,6 +82,24 @@ async function onRetry(msg: MsgData): Promise<void> {
   error.value = '';
   try {
     await retryMessage(msg);
+  } catch (err) {
+    error.value = errorMessage(err);
+  }
+}
+
+async function onRevoke(msg: MsgData): Promise<void> {
+  error.value = '';
+  try {
+    await revokeChatMessage(msg);
+  } catch (err) {
+    error.value = errorMessage(err);
+  }
+}
+
+async function onDelete(msg: MsgData): Promise<void> {
+  error.value = '';
+  try {
+    await deleteChatMessage(msg);
   } catch (err) {
     error.value = errorMessage(err);
   }
@@ -203,6 +223,8 @@ const showNoMore = computed(
         :is-group="chat.activeConversation?.conversationType === SessionType.Group"
         :nickname="nicknameOf(msg)"
         @retry="onRetry"
+        @revoke="onRevoke"
+        @delete="onDelete"
       />
     </div>
 

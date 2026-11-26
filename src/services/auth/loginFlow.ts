@@ -4,6 +4,8 @@
 import {
   SyncState,
   type ClearConversationTips,
+  type ConversationUpdateTips,
+  type DeleteMsgsTips,
   type MarkAsReadTips,
   type RevokeMsgTips,
   type SendMsgResp,
@@ -55,9 +57,16 @@ function bindIMEvents(): void {
         auth.transportStatus = event.status;
         break;
       case 'sync':
+        const wasSynced = auth.syncState === SyncState.Synced;
         auth.syncState = event.state;
         if (event.state === SyncState.Synced && auth.stage === AuthStage.IMReady) {
           auth.stage = AuthStage.Synced;
+        }
+        // 同步完成（登录补拉 / 断线重连）后，离线消息已落本地但不会逐条推送 NewMsg，
+        // 必须重读本地：会话列表摘要 + 当前打开会话的消息窗口
+        if (event.state === SyncState.Synced && !wasSynced) {
+          void chat.loadCachedConversations();
+          void chat.refreshActiveConversation();
         }
         break;
       case 'message': {
@@ -107,13 +116,29 @@ function bindIMEvents(): void {
       case 'message-revoked': {
         // 2101 通知 tips（RevokeMsgTips）
         const tip = event.payload as RevokeMsgTips | undefined;
-        if (tip?.conversationID && tip.seq) chat.markRevoked(tip.conversationID, tip.seq);
+        if (tip?.conversationID && tip.seq) {
+          chat.markRevoked(tip.conversationID, tip.seq, tip.clientMsgID);
+        }
         break;
       }
-      case 'conversation':
+      case 'message-deleted': {
+        // 2102 通知 tips（DeleteMsgsTips）
+        const tip = event.payload as DeleteMsgsTips | undefined;
+        if (tip?.conversationID && tip.seqs?.length) {
+          chat.markDeleted(tip.conversationID, tip.seqs);
+        }
+        break;
+      }
+      case 'conversation': {
+        // 1300 会话变更 / SDK 摘要刷新：tips 带本次变更的会话 ID，只收窄未读刷新；
+        // 列表仍整体重读（1300 的落库由随后的 conversations-synced 保证）
+        const tip = event.payload as ConversationUpdateTips | undefined;
+        void chat.loadCachedConversations(tip?.conversationIDList);
+        break;
+      }
       case 'conversations-synced':
-        // 1300 会话变更 / 会话缓存同步完成：本地已含增量，重新读本地
-        void chat.reloadConversations();
+        // 会话增量同步完成：payload 为空且可能含全量回退，全量重读 + 全量未读
+        void chat.loadCachedConversations();
         break;
       case 'conversation-deleted': {
         const tip = event.payload as ClearConversationTips | undefined;
@@ -253,7 +278,7 @@ async function afterReady(): Promise<void> {
   // 先用本地缓存渲染会话，增量同步完成后再由事件刷新
   void chat.loadCachedConversations();
   // 直接刷新在 /chat/:id 时，ChatView 早于登录执行，消息需要在此补载
-  void chat.reloadActiveConversation();
+  void chat.refreshActiveConversation();
 
   try {
     auth.me = await getMyProfile();
@@ -281,7 +306,7 @@ export async function retryIM(): Promise<void> {
   }
   await startIM();
   if (auth.stage === AuthStage.IMReady || auth.stage === AuthStage.Synced) {
-    void chat.reloadConversations();
+    void chat.loadCachedConversations();
   }
 }
 

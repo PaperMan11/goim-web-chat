@@ -58,9 +58,8 @@ const items = computed<ConversationItem[]>(() =>
 );
 
 function previewOf(conv: Conversation): string {
-  const content = conv.msgInfo?.content ?? '';
-  if (!content) return '';
-  return messagePreview(conv.msgInfo);
+  // 撤回摘要的 content 为空但 contentType=111，统一交给 messagePreview 判定
+  return conv.msgInfo ? messagePreview(conv.msgInfo) : '';
 }
 
 function select(item: ConversationItem): void {

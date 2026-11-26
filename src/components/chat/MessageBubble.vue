@@ -17,7 +17,11 @@ const props = withDefaults(
   { isGroup: false, nickname: '' },
 );
 
-const emit = defineEmits<{ retry: [msg: MsgData] }>();
+const emit = defineEmits<{
+  retry: [msg: MsgData];
+  revoke: [msg: MsgData];
+  delete: [msg: MsgData];
+}>();
 
 const statusText = computed(() => {
   switch (props.msg.status) {
@@ -25,12 +29,30 @@ const statusText = computed(() => {
       return '发送中…';
     case MsgStatus.SendFailed:
       return '发送失败，点击重试';
-    case MsgStatus.HasDeleted:
-      return '已撤回';
     default:
       return '';
   }
 });
+
+// 撤回与删除在协议层不是同一个东西：
+// - 撤回（2101）：消息保留，contentType 改写为 111 Revoke / 2101；SDK 缓存行可能只有 status=4
+// - 删除（2102）：SDK 直接物理删除本地行，消息根本不会进入气泡
+// 所以这里只识别「撤回」，status=4 是历史缓存行的兜底标识，不存在需要区分「删除」的场景。
+const isRevoked = computed(
+  () =>
+    props.msg.contentType === ContentType.Revoke ||
+    props.msg.contentType === ContentType.MsgRevokeNotification ||
+    props.msg.status === MsgStatus.HasDeleted,
+);
+// 只有本人已发送成功的消息可以撤回
+const canRevoke = computed(
+  () => props.mine && !isRevoked.value && props.msg.status === MsgStatus.SendSuccess,
+);
+// 删除仅自己不可见（协议允许删除任意人的消息），撤回之外的消息都可删
+const canDelete = computed(
+  () => !isRevoked.value && props.msg.status === MsgStatus.SendSuccess,
+);
+const hasActions = computed(() => canRevoke.value || canDelete.value);
 
 const contentType = computed(() => props.msg.contentType);
 const isPicture = computed(() => contentType.value === ContentType.Picture);
@@ -142,7 +164,14 @@ const imageStyle = computed(() => {
 </script>
 
 <template>
-  <div class="flex flex-col" :class="mine ? 'items-end' : 'items-start'">
+  <!-- 已撤回：居中灰字提示，不再展示原气泡内容 -->
+  <div v-if="isRevoked" class="flex justify-center py-1">
+    <span class="text-[11px] text-slate-400">
+      {{ mine ? '你撤回了一条消息' : '对方撤回了一条消息' }}
+    </span>
+  </div>
+
+  <div v-else class="group flex flex-col" :class="mine ? 'items-end' : 'items-start'">
     <!-- 群聊中非自己发的消息，顶部显示发送者昵称 -->
     <span v-if="!mine && nickname && isGroup" class="mb-0.5 px-1 text-[11px] text-slate-400">
       {{ nickname }}
@@ -216,8 +245,25 @@ const imageStyle = computed(() => {
       {{ plainText }}
     </div>
 
-    <span v-if="statusText" class="mt-0.5 px-1 text-[11px] text-slate-400">
-      {{ statusText }}
-    </span>
+    <!-- 状态行：发送状态 + 悬停显示的操作（撤回 / 删除） -->
+    <div v-if="statusText || hasActions" class="mt-0.5 flex items-center gap-2 px-1">
+      <span v-if="statusText" class="text-[11px] text-slate-400">{{ statusText }}</span>
+      <button
+        v-if="canRevoke"
+        type="button"
+        class="hidden text-[11px] text-slate-400 hover:text-red-500 group-hover:inline"
+        @click.stop="emit('revoke', msg)"
+      >
+        撤回
+      </button>
+      <button
+        v-if="canDelete"
+        type="button"
+        class="hidden text-[11px] text-slate-400 hover:text-red-500 group-hover:inline"
+        @click.stop="emit('delete', msg)"
+      >
+        删除
+      </button>
+    </div>
   </div>
 </template>
