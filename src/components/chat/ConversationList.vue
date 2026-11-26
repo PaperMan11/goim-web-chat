@@ -28,7 +28,9 @@ interface ConversationItem {
   title: string;
   avatarUrl: string;
   preview: string;
+  draft: string;
   unread: number;
+  isPinned: boolean;
 }
 
 const items = computed<ConversationItem[]>(() =>
@@ -48,14 +50,16 @@ const items = computed<ConversationItem[]>(() =>
           ? conv.msgInfo?.groupFaceURL || ''
           : contacts.avatarOf(peerID),
         preview: previewOf(conv),
+        draft: chat.drafts[conv.conversationID as string]?.trim() ?? '',
         unread: chat.unread[conv.conversationID as string] ?? 0,
+        isPinned: Boolean(conv.isPinned),
       };
     }),
 );
 
 function previewOf(conv: Conversation): string {
   const content = conv.msgInfo?.content ?? '';
-  if (!content) return conv.draftText ? `[草稿] ${conv.draftText}` : '';
+  if (!content) return '';
   return messagePreview(conv.msgInfo);
 }
 
@@ -141,7 +145,23 @@ watch(
         <Avatar :src="item.avatarUrl" :name="item.title" />
         <div class="min-w-0 flex-1">
           <div class="flex items-center justify-between gap-2">
-            <span class="truncate text-sm font-medium text-slate-800">{{ item.title }}</span>
+            <div class="flex min-w-0 items-center gap-1">
+              <svg
+                v-if="item.isPinned"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-3.5 w-3.5 shrink-0 text-amber-500"
+              >
+                <path d="M12 17v5" />
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+              </svg>
+              <span class="truncate text-sm font-medium text-slate-800">{{ item.title }}</span>
+            </div>
             <span class="shrink-0 text-[11px] text-slate-400">{{
               item.conv.latestMsgSendTime
                 ? new Date(item.conv.latestMsgSendTime).toLocaleTimeString()
@@ -149,7 +169,13 @@ watch(
             }}</span>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <span class="truncate text-xs text-slate-400">{{ item.preview }}</span>
+            <div class="flex min-w-0 items-center gap-1 text-xs">
+              <template v-if="item.draft && item.conversationID !== activeID">
+                <span class="shrink-0 font-medium text-red-500">[草稿]</span>
+                <span class="truncate text-slate-400">{{ item.draft }}</span>
+              </template>
+              <span v-else class="truncate text-slate-400">{{ item.preview }}</span>
+            </div>
             <span
               v-if="item.unread > 0"
               class="shrink-0 rounded-full bg-red-500 px-1.5 text-[11px] text-white"

@@ -200,6 +200,7 @@ const showNoMore = computed(
         :key="msg.serverMsgID || msg.clientMsgID || index"
         :msg="msg"
         :mine="isMine(msg)"
+        :is-group="chat.activeConversation?.conversationType === SessionType.Group"
         :nickname="nicknameOf(msg)"
         @retry="onRetry"
       />

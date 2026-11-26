@@ -11,9 +11,10 @@ const props = withDefaults(
   defineProps<{
     msg: MsgData;
     mine: boolean;
+    isGroup?: boolean;
     nickname?: string;
   }>(),
-  { nickname: '' },
+  { isGroup: false, nickname: '' },
 );
 
 const emit = defineEmits<{ retry: [msg: MsgData] }>();
@@ -142,7 +143,8 @@ const imageStyle = computed(() => {
 
 <template>
   <div class="flex flex-col" :class="mine ? 'items-end' : 'items-start'">
-    <span v-if="!mine && nickname" class="mb-0.5 px-1 text-[11px] text-slate-400">
+    <!-- 群聊中非自己发的消息，顶部显示发送者昵称 -->
+    <span v-if="!mine && nickname && isGroup" class="mb-0.5 px-1 text-[11px] text-slate-400">
       {{ nickname }}
     </span>
 
