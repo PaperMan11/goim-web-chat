@@ -13,6 +13,9 @@ import {
   type FilePurpose,
 } from '@/api/file/file';
 
+// 头像选择的 accept 属性（与后端 avatar 白名单同源）
+export const AVATAR_ACCEPT = AVATAR_MIMES.join(',');
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
