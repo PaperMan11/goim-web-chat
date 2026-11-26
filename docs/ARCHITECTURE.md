@@ -1,8 +1,7 @@
 # goim-web-chat 架构与开发规划
 
-> 状态：设计稿（本期只定架构与方案，不写实现代码）
+> 状态：**v0.1 已落地**（P0 核心聊天完成，含上传/表情/历史分页），当前规划 v0.2
 > 依据：`goim-business/api/openapi.yaml`（26 个路径 / 27 个操作）、`docs/FRONTEND_INTEGRATION.md`、`goim-sdk-js`
-> 已定决策：Tailwind 自建 UI、Pinia 状态、Vue Router 多路由页面、首期 P0 核心聊天
 
 ## 1. 背景与目标
 
@@ -344,7 +343,7 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 
 ## 13. 分期任务清单
 
-### P0 核心聊天
+### P0 核心聊天（v0.1 · 已落地）
 
 - [x] 修正 `X-Device-Id` 放请求头，注册/登录请求体移除 `deviceId`
 - [x] API 补全 `profile`（me/batch）、`file` 契约
@@ -352,23 +351,31 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 - [x] `stores/auth` + `services/auth/loginFlow`：登录状态机
 - [x] `stores/chat` + `services/chat/send`：会话、消息收发、乐观合并、已读
 - [x] 历史消息分页：**本地优先 + 按需远端翻页** —— 打开会话只读 `local.listMsgs(0, 100)`；上滑到顶先 `local.listMsgs(beforeSeq)` 本地分页，再用 `getConversationSeqs` 判真·到底（`LocalMinSeq <= ServerMinSeq` 才是全齐），本地缺口时 `pullHistory({ beforeSeq })` 远端拉取；prepend 后维持滚动锚点
-- [ ] `services/chat/upload`：单文件 PUT + 分片 + 续签 + 断点（API 契约 `presignFile` / `presignMultipart` / `completeMultipart` 已写在 `api/file/file.ts`，服务层、UploadProgress 组件、Composer 附件入口均未落地）
+- [x] **附件上传全链路**（`services/chat/upload.ts` + `services/chat/send.ts#sendAttachment` + Composer 附件按钮 + MessageBubble 图片/文件渲染）：purpose 四档拆分（`avatar` / `chat_image` / `chat_file` / `attachment`），conversationId 贯穿，单文件 PUT + 分片并发（3 worker）+ 403 自动续签 + AbortController 取消 + localStorage 断点持久化；预签名 URL 前端不持久化，MessageBubble 渲染时懒调 `getFileURL(fileId)` 换实时 URL
+- [x] **消息气泡渲染**：文本、图片（按天然宽高等比缩放）、文件（下载按钮，点击时换签 + fetch→Blob→强制下载）
+- [x] **Composer 微信风格**：底部工具栏（表情 + 语音占位 + + 更多 + textarea + 发送），"+" 展开 4 列网格面板（图片/文件/拍摄/位置），表情面板（~500 个 Unicode emoji / 8 分组 tab / 最近使用持久化 / 光标位置插入）
+- [x] **滚动定位**：刷新后 `forceBottom`（rAF 循环 1.5s + 禁用浏览器 scroll restoration）覆盖所有异步高度变化；发送消息后自动滚到底；上滑加载历史维持视觉锚点不跳
 - [x] 视图：LoginView、ChatView（三栏）、ContactsView 骨架
 - [x] 断线重连与手动重连入口
 
-### P1 完整账号与资料
+### P1 完整账号与资料（v0.2 · 下一批）
 
+- [ ] 群聊气泡显示成员昵称（`SessionType.Group` 分支，已暴露 `contacts.nicknameOf`）、群聊 ConversationList 显示群图标
+- [ ] 草稿读写：`chat.drafts` 字段 + localStorage 已实现，Composer 未读写（5 分钟活）
+- [ ] 会话置顶：SDK `isPinned` 已存本地，ConversationItem 未显示置顶图标/未提供置顶/取消置顶操作
+- [ ] 资料编辑与头像上传（`purpose=avatar`）：`updateMyProfile` + `/files/presign` + SettingsView 头像入口
 - [ ] `/account/sessions`、revoke、password、`/devices`（API 契约未写，store/UI 全无）
-- [ ] 资料编辑与头像上传（`purpose=avatar`）：`updateMyProfile` + `/files/presign` + Composer 头像入口
 - [ ] `profile/users/{userId}` 详情页；`im/retry` 的 service 层封装（SettingsView 与 ChatLayout 已有「重试 IM 连接」按钮，但直调 `imRetry` 而非 `retryIM` service）
-- [ ] 草稿（`chat.drafts` 字段 + localStorage 已实现，Composer 未读写）、会话置顶（SDK `isPinned` 字段已存本地，ConversationItem 未显示置顶图标/未提供置顶/取消置顶操作）
 
 ### P2 增强
 
+- [ ] **群聊管理**：SDK `GroupMgr` 能力完备（建群、群资料、入群申请、成员列表/邀请/踢人/禁言、转让与解散），但 `stores/chat` 未暴露群 action、视图无群列表入口
+- [ ] **消息撤回 UI**：SDK `messages.revoke` + store `markRevoked` 已实现，`MsgStatus.HasDeleted` 状态存在但 MessageBubble 无撤回视觉、无长按菜单入口
+- [ ] **语音消息**：Composer `🎙️` 按钮已占位（disabled），长按录音 → Web Audio API 或 MediaRecorder → ContentType.Voice 103
+- [ ] **拍摄**：Composer 面板 `📷` 已占位，`navigator.mediaDevices.getUserMedia` → 拍照 → 走图片上传链路
+- [ ] **位置**：Composer 面板 `📍` 已占位，Geolocation API → ContentType.Location 109
 - [ ] `client-config` + schema（API 契约已写，待接入 settings store 与 SettingsView UI）
-- [ ] 账号注销（`DELETE /account`）
-- [ ] 群聊管理：SDK `GroupMgr` 能力完备（建群、群资料、入群申请、成员列表/邀请/踢人/禁言、转让与解散），但 `stores/chat` 未暴露群 action、视图无群列表入口、群聊消息 `ConversationType.Group` 下气泡也没显示群成员昵称
-- [ ] 消息撤回 UI（SDK `messages.revoke` + store `markRevoked` 已实现，`MsgStatus.HasDeleted` 状态存在但 MessageBubble 无撤回视觉、无长按菜单入口）、消息搜索
+- [ ] 账号注销（`DELETE /account`）、消息搜索、深色模式
 
 ## 14. 待确认与风险
 
