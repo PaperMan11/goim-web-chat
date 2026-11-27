@@ -370,7 +370,8 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 ### P2 增强
 
 - [ ] **群聊管理**：SDK `GroupMgr` 能力完备（建群、群资料、入群申请、成员列表/邀请/踢人/禁言、转让与解散），但 `stores/chat` 未暴露群 action、视图无群列表入口
-- [ ] **消息撤回 UI**：SDK `messages.revoke` + store `markRevoked` 已实现，`MsgStatus.HasDeleted` 状态存在但 MessageBubble 无撤回视觉、无长按菜单入口
+- [x] **消息撤回 UI**：气泡悬停显示「撤回 / 删除」；撤回限本人 2 分钟内（服务端 `1405` 终裁，管理员代撤豁免），删除走 2102 本地移除
+- [ ] **消息操作菜单**：气泡悬停操作已落地，长按/右键上下文菜单（引用、转发、复制）待补
 - [ ] **语音消息**：Composer `🎙️` 按钮已占位（disabled），长按录音 → Web Audio API 或 MediaRecorder → ContentType.Voice 103
 - [ ] **拍摄**：Composer 面板 `📷` 已占位，`navigator.mediaDevices.getUserMedia` → 拍照 → 走图片上传链路
 - [ ] **位置**：Composer 面板 `📍` 已占位，Geolocation API → ContentType.Location 109

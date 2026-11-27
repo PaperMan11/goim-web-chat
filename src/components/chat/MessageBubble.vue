@@ -4,6 +4,7 @@ import { ContentType, MsgStatus, type MsgData } from '@goim/web-sdk';
 
 import { getFileURL } from '@/api/file/file';
 import { parseFileContent, parseImageContent } from '@/im/message';
+import { withinRevokeWindow } from '@/services/chat/revoke';
 import { formatBytes } from '@/utils/file';
 import { messageText } from '@/utils/message';
 
@@ -44,9 +45,14 @@ const isRevoked = computed(
     props.msg.contentType === ContentType.MsgRevokeNotification ||
     props.msg.status === MsgStatus.HasDeleted,
 );
-// 只有本人已发送成功的消息可以撤回
+// 只有本人已发送成功、且仍在 2 分钟窗口内的消息可以撤回（管理员代撤由服务端豁免）
+// 窗口按渲染时刻计算，超时后点击会被 revokeChatMessage 再次拦截
 const canRevoke = computed(
-  () => props.mine && !isRevoked.value && props.msg.status === MsgStatus.SendSuccess,
+  () =>
+    props.mine &&
+    !isRevoked.value &&
+    props.msg.status === MsgStatus.SendSuccess &&
+    withinRevokeWindow(props.msg),
 );
 // 删除仅自己不可见（协议允许删除任意人的消息），撤回之外的消息都可删
 const canDelete = computed(
