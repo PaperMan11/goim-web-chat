@@ -43,6 +43,13 @@ const profileSaving = ref(false);
 const profileMsg = ref('');
 const profileError = ref('');
 
+// 设置子页：会话 / 设备 / 改密统一放在 views/settings 下
+const securityEntries = [
+  { to: '/settings/sessions', label: '登录会话' },
+  { to: '/settings/devices', label: '我的设备' },
+  { to: '/settings/password', label: '修改密码' },
+];
+
 // auth.me 异步加载完成（登录后 afterReady）时回填表单
 watch(
   () => auth.me,
@@ -187,6 +194,21 @@ async function onLogout(): Promise<void> {
             <dd class="text-slate-800">{{ auth.userId }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section class="mb-4 rounded-lg bg-white p-4 ring-1 ring-slate-200">
+        <h2 class="mb-2 text-xs font-medium text-slate-500">安全</h2>
+        <ul class="divide-y divide-slate-100 text-sm">
+          <li v-for="entry in securityEntries" :key="entry.to">
+            <RouterLink
+              :to="entry.to"
+              class="flex items-center justify-between py-2 text-slate-700 hover:text-blue-600"
+            >
+              <span>{{ entry.label }}</span>
+              <span class="text-slate-300">›</span>
+            </RouterLink>
+          </li>
+        </ul>
       </section>
 
       <section class="mb-4 rounded-lg bg-white p-4 ring-1 ring-slate-200">

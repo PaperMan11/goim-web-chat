@@ -1,4 +1,4 @@
-// 用户资料接口，与 goim-business internal/handler/profile 一一对应。
+// 用户资料接口，与 goim-business internal/handler/account/profile.go 一一对应。
 
 import { request } from '../http';
 

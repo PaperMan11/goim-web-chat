@@ -22,6 +22,7 @@ const emit = defineEmits<{
   retry: [msg: MsgData];
   revoke: [msg: MsgData];
   delete: [msg: MsgData];
+  profile: [userID: string];
 }>();
 
 const statusText = computed(() => {
@@ -178,10 +179,15 @@ const imageStyle = computed(() => {
   </div>
 
   <div v-else class="flex flex-col" :class="mine ? 'items-end' : 'items-start'">
-    <!-- 群聊中非自己发的消息，顶部显示发送者昵称 -->
-    <span v-if="!mine && nickname && isGroup" class="mb-0.5 px-1 text-[11px] text-slate-400">
+    <!-- 顶部显示发送者昵称；点昵称查看用户资料 -->
+    <button
+      v-if="!mine && nickname"
+      type="button"
+      class="mb-0.5 px-1 text-[11px] text-slate-400 hover:text-blue-600"
+      @click.stop="emit('profile', msg.sendID ?? '')"
+    >
       {{ nickname }}
-    </span>
+    </button>
 
     <!-- group 只包住气泡与状态行：鼠标移到气泡上才显示撤回/删除，不再响应整行空白；
          宽度上限 = 列宽 70%，并在宽屏（md+）收紧到 32rem，超长文本按此换行 -->

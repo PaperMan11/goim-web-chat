@@ -7,6 +7,10 @@ import ChatLayout from '@/layouts/ChatLayout.vue';
 import ChatView from '@/views/chat/ChatView.vue';
 import ContactsView from '@/views/contacts/ContactsView.vue';
 import LoginView from '@/views/login/LoginView.vue';
+import UserProfileView from '@/views/profile/UserProfileView.vue';
+import DevicesView from '@/views/settings/DevicesView.vue';
+import PasswordView from '@/views/settings/PasswordView.vue';
+import SessionsView from '@/views/settings/SessionsView.vue';
 import SettingsView from '@/views/settings/SettingsView.vue';
 
 const router = createRouter({
@@ -22,6 +26,10 @@ const router = createRouter({
         { path: 'chat/:conversationID', name: 'chat-conversation', component: ChatView },
         { path: 'contacts', name: 'contacts', component: ContactsView },
         { path: 'settings', name: 'settings', component: SettingsView },
+        { path: 'settings/sessions', name: 'settings-sessions', component: SessionsView },
+        { path: 'settings/devices', name: 'settings-devices', component: DevicesView },
+        { path: 'settings/password', name: 'settings-password', component: PasswordView },
+        { path: 'users/:userId', name: 'user-profile', component: UserProfileView },
       ],
     },
   ],

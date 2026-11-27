@@ -6,7 +6,7 @@ import {
   updateMyProfile,
   type ProfileView,
   type UpdateProfileInput,
-} from '@/api/profile/profile';
+} from '@/api/account/profile';
 import { uploadAttachment } from '@/services/chat/upload';
 import { useAuthStore } from '@/stores/auth';
 import { validateAttachment } from '@/utils/file';

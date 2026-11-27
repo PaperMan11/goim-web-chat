@@ -11,3 +11,7 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// 构建期注入的 package.json version（vite.config.ts 的 define）
+declare const __APP_VERSION__: string;
+declare const __SDK_VERSION__: string;

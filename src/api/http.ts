@@ -28,12 +28,19 @@ export interface HttpClientOptions {
   timeout?: number;
 }
 
+// 客户端版本：由 vite.config.ts 在构建期从 package.json 注入
+const CLIENT_VERSION = __APP_VERSION__;
+
 // 通用 axios 实例工厂（每个后端服务一个实例）
 export function createHttpClient(options: HttpClientOptions): AxiosInstance {
   return axios.create({
     baseURL: options.baseURL.replace(/\/+$/, ''),
     timeout: options.timeout ?? 15000,
-    headers: { 'X-Client-Platform': 'web', 'X-Device-Id': getDeviceId() },
+    headers: {
+      'X-Client-Platform': 'web',
+      'X-Device-Id': getDeviceId(),
+      'X-Client-Version': CLIENT_VERSION,
+    },
   });
 }
 
@@ -143,6 +150,20 @@ export async function request<T>(
 
 let renewInFlight: Promise<BusinessSession> | undefined;
 
+// 登录态不可恢复时的全局回调：由 auth 流程注册，用于立即清状态并回登录页。
+let authInvalidHandler: ((reason: unknown) => void) | undefined;
+
+export function onAuthInvalid(handler: (reason: unknown) => void): void {
+  authInvalidHandler = handler;
+}
+
+function notifyAuthInvalid(reason: unknown): void {
+  const handler = authInvalidHandler;
+  // 只触发一次，避免并发请求重复跳转。
+  authInvalidHandler = undefined;
+  handler?.(reason);
+}
+
 async function renewSession(): Promise<BusinessSession> {
   if (!renewInFlight) {
     renewInFlight = doRenew().finally(() => {
@@ -157,7 +178,9 @@ async function doRenew(): Promise<BusinessSession> {
   const current = loadSession();
   if (!current?.refreshToken) {
     clearSession();
-    throw new BusinessApiError(CODE_UNAUTHENTICATED, '登录态已失效，请重新登录');
+    const err = new BusinessApiError(CODE_UNAUTHENTICATED, '登录态已失效，请重新登录');
+    notifyAuthInvalid(err);
+    throw err;
   }
 
   let auth: AuthPayload;
@@ -169,6 +192,13 @@ async function doRenew(): Promise<BusinessSession> {
     );
   } catch (err) {
     clearSession();
+    // 只有明确的凭证失效才强制登出；网络错误保留页面，等待用户重试。
+    if (
+      isBusinessApiError(err) &&
+      (err.code === CODE_UNAUTHENTICATED || err.code === CODE_ACCESS_EXPIRED)
+    ) {
+      notifyAuthInvalid(err);
+    }
     throw err;
   }
 

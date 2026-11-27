@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import vue from '@vitejs/plugin-vue';
@@ -8,6 +9,16 @@ const sdkEntry = fileURLToPath(
   new URL('../goim-sdk-js/src/index.ts', import.meta.url),
 );
 
+// 前端 app 版本（package.json）→ biz HTTP 头 X-Client-Version
+const appPkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf-8'),
+) as { version: string };
+
+// goim SDK 版本（goim-sdk-js/package.json）→ goim WS 握手里的 sdkVersion
+const sdkPkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../goim-sdk-js/package.json', import.meta.url)), 'utf-8'),
+) as { version: string };
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiTarget = env.VITE_GOIM_API_PROXY || 'http://192.168.241.128:18880';
@@ -16,6 +27,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue(), tailwindcss()],
+    define: {
+      __APP_VERSION__: JSON.stringify(appPkg.version),
+      __SDK_VERSION__: JSON.stringify(sdkPkg.version),
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),

@@ -3,7 +3,7 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
 
-import { batchProfiles, type PublicProfileView } from '@/api/profile/profile';
+import { batchProfiles, getPublicProfile, type PublicProfileView } from '@/api/account/profile';
 
 const BATCH_SIZE = 100;
 const TTL = 10 * 60 * 1000;
@@ -42,6 +42,23 @@ export const useContactsStore = defineStore('contacts', () => {
     }
   }
 
+  // 单人资料：优先用缓存，未命中走 GET /profile/users/{userId}（资料详情页使用）
+  async function ensureProfile(userId: string): Promise<PublicProfileView | undefined> {
+    if (!userId) return undefined;
+    const cached = profiles.value[userId];
+    if (cached) return cached;
+    loading.value = true;
+    try {
+      const profile = await getPublicProfile(userId);
+      profiles.value = { ...profiles.value, [userId]: profile };
+      return profile;
+    } catch {
+      return undefined;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   function nicknameOf(userId?: string, fallback?: string): string {
     if (!userId) return fallback || '未知用户';
     return profiles.value[userId]?.nickname || fallback || userId;
@@ -61,6 +78,7 @@ export const useContactsStore = defineStore('contacts', () => {
     profiles,
     loading,
     ensureProfiles,
+    ensureProfile,
     nicknameOf,
     avatarOf,
     reset,

@@ -10,7 +10,7 @@ import {
 } from '@goim/web-sdk';
 
 import { loadSession, type BusinessSession } from '@/api/client';
-import type { ProfileView } from '@/api/profile/profile';
+import type { ProfileView } from '@/api/account/profile';
 
 export const AuthStage = {
   Anonymous: 'anonymous',

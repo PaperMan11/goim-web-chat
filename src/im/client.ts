@@ -34,6 +34,8 @@ export interface IMInitOptions {
   apiBaseURL?: string;
   wsEndpoint?: string;
   platformID?: number;
+  deviceID?: string; // 业务层注入，与 biz HTTP 头 X-Device-Id 一致
+  sdkVersion?: string; // 构建期注入（package.json version）
   wasmBasePath?: string;
   // false 表示关闭全部 SDK 日志
   logging?: GoimLogConfig | false;
@@ -71,6 +73,8 @@ async function doInit(options: IMInitOptions): Promise<Goim> {
       baseURL: apiBaseURL,
       endpoint: wsEndpoint,
       platformID: options.platformID ?? defaultPlatformID(),
+      deviceID: options.deviceID ?? '',
+      sdkVersion: options.sdkVersion ?? '',
       sessionDataPath: 'idb',
       logging,
     },

@@ -33,6 +33,12 @@ function openConversation(conversationID?: string): void {
   void router.push({ name: 'chat-conversation', params: { conversationID } });
 }
 
+// 点头像进入用户资料详情（行本身仍然打开会话）
+function openProfile(userID?: string): void {
+  if (!userID) return;
+  void router.push({ name: 'user-profile', params: { userId: userID } });
+}
+
 async function loadProfiles(): Promise<void> {
   const ids = friends.value
     .map((conv) => conv.userID)
@@ -58,11 +64,21 @@ onMounted(() => {
             class="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-slate-50"
             @click="openConversation(conv.conversationID)"
           >
-            <Avatar :src="contacts.avatarOf(conv.userID)" :name="contacts.nicknameOf(conv.userID)" />
+            <Avatar
+              size="sm"
+              :src="contacts.avatarOf(conv.userID)"
+              :name="contacts.nicknameOf(conv.userID)"
+              class="cursor-pointer"
+              @click.stop="openProfile(conv.userID)"
+            />
             <div class="min-w-0">
-              <p class="truncate text-sm text-slate-800">
+              <button
+                type="button"
+                class="block max-w-full truncate text-sm text-slate-800 hover:text-blue-600"
+                @click.stop="openProfile(conv.userID)"
+              >
                 {{ contacts.nicknameOf(conv.userID, conv.msgInfo?.senderName) }}
-              </p>
+              </button>
               <p class="truncate text-xs text-slate-400">{{ conv.userID }}</p>
             </div>
           </li>

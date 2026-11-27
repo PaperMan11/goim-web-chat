@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { SessionType, type MsgData } from '@goim/web-sdk';
 
 import { retryMessage } from '@/services/chat/send';
@@ -15,6 +16,7 @@ import MessageBubble from './MessageBubble.vue';
 const chat = useChatStore();
 const auth = useAuthStore();
 const contacts = useContactsStore();
+const router = useRouter();
 
 const container = ref<HTMLDivElement>();
 const error = ref('');
@@ -103,6 +105,12 @@ async function onDelete(msg: MsgData): Promise<void> {
   } catch (err) {
     error.value = errorMessage(err);
   }
+}
+
+// 群聊点发送者昵称 → 用户资料详情
+function openProfile(userID: string): void {
+  if (!userID) return;
+  void router.push({ name: 'user-profile', params: { userId: userID } });
 }
 
 // 上滑到顶部附近触发历史加载；prepend 历史后维持滚动锚点
@@ -225,6 +233,7 @@ const showNoMore = computed(
         @retry="onRetry"
         @revoke="onRevoke"
         @delete="onDelete"
+        @profile="openProfile"
       />
     </div>
 
