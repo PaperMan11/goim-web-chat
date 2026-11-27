@@ -13,9 +13,11 @@ import {
 
 import * as account from '@/api/account/account';
 import * as imApi from '@/api/account/im';
-import { CODE_DEPENDENCY, isBusinessApiError, loadSession } from '@/api/client';
-import { getMyProfile } from '@/api/profile/profile';
+import { CODE_DEPENDENCY, getDeviceId, isBusinessApiError, loadSession } from '@/api/client';
+import { onAuthInvalid } from '@/api/http';
+import { getMyProfile } from '@/api/account/profile';
 import {
+  getIM,
   initIM,
   loginIM,
   logoutIM,
@@ -35,9 +37,18 @@ import { errorMessage } from '@/utils/error';
 
 let eventsBound = false;
 
-// 登录态不可恢复：停续期 → 清业务态 → 整页回登录页（确保 wasm/runtime 一并重置）
-function expireSession(): void {
+// 登录态不可恢复：停续期 → 登出 SDK（Disconnect 断 WS、清内存 session）
+// → 清业务态 → 整页回登录页
+async function expireSession(): Promise<void> {
   stopIMTokenRenewal();
+  try {
+    // clearData=false 保留 IndexedDB（按 owner 分区，不影响切换）；
+    // 关键是 Disconnect 把 WS 连接上的旧用户身份清掉，否则下一次 Connect()
+    // 还可能拿到 IsConnected()=true 直接跳过重连
+    await logoutIM(false);
+  } catch {
+    // ignore：wasm 未加载、WS 已断开等
+  }
   useAuthStore().reset();
   useChatStore().reset();
   useContactsStore().reset();
@@ -47,6 +58,10 @@ function expireSession(): void {
 function bindIMEvents(): void {
   if (eventsBound) return;
   eventsBound = true;
+
+  // 业务侧 refresh 返回 1002/2004 时（例如设备被移除、会话被踢），立即退出登录，
+  // 不依赖用户主动切换页面触发下一次请求。
+  onAuthInvalid(() => expireSession());
 
   subscribeIM((event) => {
     const auth = useAuthStore();
@@ -249,8 +264,19 @@ export async function startIM(): Promise<void> {
       apiBaseURL: credentials.apiBaseUrl || undefined,
       wsEndpoint: credentials.wsUrl || undefined,
       platformID: credentials.platformId,
+      deviceID: getDeviceId(),
+      sdkVersion: __SDK_VERSION__,
     });
     bindIMEvents();
+
+    // 关键防御：如果 goim 单例已登录过另一个用户（ForceLogout 后不刷直接切号、或手动退出后直接切号），
+    // 必须先 logout(false) 清内存 session + Disconnect 断 WS；否则 WS 还连着旧用户，
+    // 下一次 Connect() 会因 IsConnected()=true 跳过重连，新用户的 senderID 请求被服务端拒绝。
+    const existing = getIM();
+    if (existing?.currentUserID && existing.currentUserID !== credentials.userId) {
+      await existing.logout(false);
+    }
+
     await loginIM({
       userID: credentials.userId,
       token: credentials.token,
@@ -318,6 +344,7 @@ export async function logoutAccount(): Promise<void> {
   } catch {
     // 服务端失败也要清理本地
   }
+  // clearData=false：IndexedDB 按 owner 分区，不同用户互不影响，保留旧用户缓存省一次全量同步
   try {
     await logoutIM(false);
   } catch {
