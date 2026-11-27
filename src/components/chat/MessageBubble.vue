@@ -183,8 +183,12 @@ const imageStyle = computed(() => {
       {{ nickname }}
     </span>
 
-    <!-- group 只包住气泡与状态行：鼠标移到气泡上才显示撤回/删除，不再响应整行空白 -->
-    <div class="group flex max-w-[70%] flex-col" :class="mine ? 'items-end' : 'items-start'">
+    <!-- group 只包住气泡与状态行：鼠标移到气泡上才显示撤回/删除，不再响应整行空白；
+         宽度上限 = 列宽 70%，并在宽屏（md+）收紧到 32rem，超长文本按此换行 -->
+    <div
+      class="group flex min-w-0 max-w-[70%] flex-col md:max-w-[32rem]"
+      :class="mine ? 'items-end' : 'items-start'"
+    >
       <!-- 图片消息 -->
       <div
         v-if="isPicture"
@@ -241,10 +245,11 @@ const imageStyle = computed(() => {
         </div>
       </div>
 
-      <!-- 文本 / 占位消息 -->
+      <!-- 文本 / 占位消息：overflow-wrap:anywhere 才能压缩 min-content，
+           否则超长无空格串（如粘贴的 JSON）会把气泡顶出 max-width 限制 -->
       <div
         v-else
-        class="rounded-xl px-3 py-2 text-sm break-words whitespace-pre-wrap"
+        class="rounded-xl px-3 py-2 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]"
         :class="
           mine ? 'bg-blue-600 text-white' : 'bg-white text-slate-800 ring-1 ring-slate-200'
         "
