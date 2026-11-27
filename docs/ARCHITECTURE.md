@@ -59,8 +59,8 @@ src/
     account/
       account.ts              # ↔ handler/account/account.go
       im.ts                   # ↔ handler/account/im.go
-    profile/profile.ts        # ↔ handler/profile
-    device/device.ts          # ↔ handler/device
+      device.ts               # ↔ handler/account/device.go
+      profile.ts              # ↔ handler/account/profile.go
     file/file.ts              # ↔ handler/file
     config/config.ts          # ↔ handler/clientconfig
   im/
@@ -68,28 +68,38 @@ src/
     events.ts                 # SDK 事件 → 业务事件（消息、会话、连接、同步）
     message.ts                # 发送、历史拉取、已读与撤回
   services/                  # 按业务域分目录，目录=域、文件=流程
-    auth/loginFlow.ts         # 账号登录 → im/token → SDK 登录 → 同步完成
+    auth/loginFlow.ts         # 账号登录 → im/token → SDK 登录 → 同步完成（含 retryIM / logout）
     auth/imToken.ts           # IM token 续期：到期前预取并注入 SDK，失败退避/失效登出
+    auth/profile.ts           # 本人资料读取/保存、头像上传（purpose=avatar）
+    account/sessions.ts       # 登录会话列表 + 踢出
+    account/password.ts       # 修改密码（复杂度校验）
+    account/devices.ts        # 设备列表 + 移除（本机保护）
     chat/conversation.ts      # 本地优先会话加载、本地/远端历史、未读、已读上报
     chat/send.ts              # 文本 / 图片 / 文件消息发送与失败重试
+    chat/revoke.ts            # 消息撤回：seq 反查 + 2 分钟窗口校验 + 状态标记
+    chat/delete.ts            # 消息删除（默认仅自己不可见，走 2102）
     chat/upload.ts            # 上传队列：单文件 / 分片 / ETag 续传 / 403 续签
   stores/
     auth.ts                   # 账号会话 + 登录状态机 + IM 凭证
     chat.ts                   # 会话列表、消息、未读、草稿、当前会话
     contacts.ts               # 资料缓存（自己 / 他人）
-    settings.ts               # 设备列表、客户端配置
+    settings.ts               # 设备列表、客户端配置（规划，暂由视图经 services 读取）
   router/index.ts
   views/
     login/LoginView.vue        # 按页面域分目录，子页面放在同域目录下
     chat/ChatView.vue          # 例：chat/ChatView.vue、chat/panel/ForwardView.vue
     contacts/ContactsView.vue
+    profile/UserProfileView.vue # 公开资料详情（/users/:userId）
     settings/SettingsView.vue
+    settings/SessionsView.vue  # 登录会话
+    settings/DevicesView.vue   # 我的设备
+    settings/PasswordView.vue  # 修改密码
   components/
     layout/                   # AppShell、SideNav、SplitPane
     chat/                     # ConversationList、ConversationItem、MessageList、MessageBubble、Composer、AttachmentPicker
     common/                   # Avatar、EmptyState、Toast、ConfirmDialog、LoadingOverlay
     debug/                    # EventLog（保留，仅开发模式显示）
-  utils/                      # 时间格式化、文件大小、mime 判断、图片压缩
+  utils/                      # 时间格式化、平台名、文件大小、mime 判断、图片压缩
 ```
 
 ## 5. API 层规范
@@ -106,7 +116,7 @@ src/
 |---|---|---|
 | `X-Device-Id` | axios 实例默认头（注册/登录必填） | 1-64 字符，`getDeviceId()` 生成并持久化；请求体不再携带 `deviceId` |
 | `X-Client-Platform` | 实例默认头 | 固定 `web` |
-| `X-Client-Version` | 实例默认头 | 可选，缺失按空值；接入构建版本后再填 |
+| `X-Client-Version` | 实例默认头 | 取构建期注入的 `package.json` version（`vite.config.ts` 的 `define: __APP_VERSION__`），上限 32 字符；用于设备登记与观测 |
 | `Authorization` | 请求拦截器 | `Bearer <accessToken>`，`auth:false` 时跳过 |
 | `If-None-Match` | `client-config` 专用 | 命中返回 304（无 body），HTTP 层已放行并回退本地缓存 |
 
@@ -134,19 +144,19 @@ src/
 | 2 | POST | `/account/login` | `account/account.ts#login` | P0 |
 | 3 | POST | `/account/refresh` | `http.ts` 内部 `doRenew` | P0 |
 | 4 | POST | `/account/logout` | `account/account.ts#logout` | P0 |
-| 5 | GET | `/account/sessions` | `listSessions` | P1 |
-| 6 | POST | `/account/sessions/revoke` | `revokeSession` | P1 |
-| 7 | PUT | `/account/password` | `changePassword` | P1 |
+| 5 | GET | `/account/sessions` | `account/account.ts#listSessions` | P1 |
+| 6 | POST | `/account/sessions/revoke` | `account/account.ts#revokeSession` | P1 |
+| 7 | PUT | `/account/password` | `account/account.ts#changePassword` | P1 |
 | 8 | DELETE | `/account` | `deleteAccount` | P2 |
 | 9 | POST | `/im/token` | `account/im.ts#imToken` | P0 |
 | 10 | GET | `/im/status` | `imStatus` | P0 |
-| 11 | POST | `/im/retry` | `imRetry` | P1 |
-| 12 | GET | `/profile/me` | `profile/profile.ts#getMyProfile` | P0（头像展示） |
-| 13 | PUT | `/profile/me` | `updateMyProfile` | P1 |
+| 11 | POST | `/im/retry` | `account/im.ts#imRetry`（经 `services/auth/loginFlow#retryIM`） | P1 |
+| 12 | GET | `/profile/me` | `account/profile.ts#getMyProfile` | P0（头像展示） |
+| 13 | PUT | `/profile/me` | `updateMyProfile` | P0（资料编辑） |
 | 14 | POST | `/profile/batch` | `batchProfiles` | P0 |
-| 15 | GET | `/profile/users/{userId}` | `getPublicProfile` | P1 |
-| 16 | GET | `/devices` | `device/device.ts#listDevices` | P1 |
-| 17 | DELETE | `/devices/{deviceId}` | `removeDevice` | P1 |
+| 15 | GET | `/profile/users/{userId}` | `account/profile.ts#getPublicProfile` | P1（资料详情页） |
+| 16 | GET | `/devices` | `account/device.ts#listDevices` | P1 |
+| 17 | DELETE | `/devices/{deviceId}` | `account/device.ts#removeDevice` | P1 |
 | 18 | GET | `/client-config` | `config/config.ts#getClientConfig` | P2（契约已实现） |
 | 19 | GET | `/client-config/schema` | `getClientConfigSchema` | P2（契约已实现） |
 | 20 | POST | `/files/presign` | `file/file.ts#presignFile` | P0（avatar 与 ≤8MB 附件） |
@@ -179,13 +189,17 @@ SDK 原始事件 ──▶ im/events.ts ──▶ 业务事件 ──▶ stores 
 | `sync` | SyncStart / SyncFinish / SyncFailed | `auth.syncState` |
 | `message` | NewMsg | `chat.upsertMessages` |
 | `message-sent` | MsgSent | `chat.markSent` |
-| `message-revoked` | RevokeMsg / MsgRevoked | `chat.markRevoked` |
+| `message-revoked` | RevokeMsg / MsgRevoked（2101） | `chat.markRevoked`（`status=4` + `contentType=111`，展示「撤回了一条消息」） |
+| `message-deleted` | DeleteMsgs（2102） | `chat.markDeleted`（从内存消息列表移除，不留占位） |
 | `read` | MarkAsRead | `chat.applyReadReceipt` |
-| `conversation` | ConversationUpdate / ConversationCreated | `chat.reloadConversations`（重读本地缓存） |
-| `conversations-synced` | ConversationSynced（会话本地缓存已更新） | `chat.reloadConversations`（重读本地缓存） |
+| `conversation` | ConversationUpdate / ConversationCreated | `chat.loadCachedConversations(conversationIDList)`（重读本地，`tips` 只用于收窄未读刷新） |
+| `conversations-synced` | ConversationSynced（会话本地缓存已更新） | `chat.loadCachedConversations`（重读本地 + 全量未读） |
 | `conversation-deleted` | ConversationDelete | `chat.removeConversation` |
 | `session-expired` | ForceLogout | 清会话 + 回登录页 |
 | `raw` | 其它未映射事件 | 仅进调试日志 |
+
+- 会话列表**纯本地读取**（`local.listConversations`），已移除服务端全量兜底（原 `reloadConversations` / `loadConversations`）；全量数据由 SDK 同步落库后发 `conversations-synced` 驱动重读。
+- `sync` 从「非 Synced」进入 `Synced`（登录补拉 / 断线重连）时必须重读本地：`chat.loadCachedConversations()` + `chat.refreshActiveConversation()`——离线消息已落本地但不逐条推送 `NewMsg`。
 
 ### 6.3 登录状态机
 
@@ -224,9 +238,10 @@ actions：`login`、`register`、`logout`、`bootstrap`（刷新页面后恢复�
 | `messagesByConversation` | `Record<conversationID, MsgData[]>`，按 seq 升序 |
 | `unread` | 未读数：`local.unreadCount(conversationID)`（SDK Local 门面）本地推导（不发网络请求），口径为缓存中 `seq > hasReadSeq` 且未撤回的条数；`local.unreadTotal()` 为全部会话总和 |
 | `drafts` | 会话草稿，持久化 localStorage |
-| `sending` | 进行中的发送任务（clientMsgID → 状态） |
+| `historyLoading` / `noMoreHistory` | 上滑加载历史：按会话的加载中标记与「已到最早」标记 |
+| `isPageVisible` | 页面可见性，tab 不可见时暂停自动已读 |
 
-actions：`loadConversations`、`selectConversation`、`upsertMessage`、`sendText`、`sendAttachment`、`markRead`、`revoke`。
+actions：`loadCachedConversations(conversationIDs?)`（读本地，可传本次变更会话收窄未读刷新）、`refreshUnread`、`refreshActiveConversation`（按 clientMsgID 合并当前会话窗口，幂等）、`upsertMessages`、`markSent` / `markFailed`、`markRevoked`、`markDeleted`、`openConversation`、`loadMoreHistory`、`requestScrollToLatest`。
 
 ### 7.3 `stores/contacts.ts`
 
@@ -237,15 +252,17 @@ actions：`loadConversations`、`selectConversation`、`upsertMessage`、`sendTe
 | `loadingIDs` | 正在批量拉取的 userId 集合 |
 | `lastFetchAt` | 每批次的 TTL（默认 10 分钟） |
 
-actions：`ensureProfiles(userIds)`（内部按 100 个一批调用 `profile/batch`）、`loadJoinedGroups(page)`、`ensureGroupInfo(groupIDs)`、`invalidate(userId)`。
+actions：`ensureProfiles(userIds)`（内部按 100 个一批调用 `profile/batch`）、`ensureProfile(userId)`（单人未命中走 `profile/users/{userId}`，资料详情页使用）、`loadJoinedGroups(page)`、`ensureGroupInfo(groupIDs)`、`invalidate(userId)`。
 
-### 7.4 `stores/settings.ts`
+### 7.4 `stores/settings.ts`（规划）
 
 | 字段 | 说明 |
 |---|---|
 | `devices` | `DeviceView[]` |
 | `clientConfig` | 配置对象 + `etag` |
 | `debugPanelVisible` | 开发模式日志面板开关 |
+
+当前设备列表由 `views/settings/DevicesView.vue` 直接经 `services/account/devices.ts` 读取，未做 store 缓存；接入 `client-config` 时再统一落到该 store。
 
 ## 8. 关键流程
 
@@ -303,6 +320,18 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 由 SDK 负责（已实现连续失败 5 次后放弃）。前端页面需提供手动「重连」入口：
 `im.retry()` → `GET /im/status` → 必要时 `POST /im/retry` → 重新 `connect`。
 
+### 8.7 撤回 / 删除消息
+
+两条独立路径，协议上不共用：
+
+| 动作 | 协议链路 | 服务端 | 前端 |
+|---|---|---|---|
+| 撤回（对所有人） | `messages.revoke` → 2101 `RevokeMsgTips` | `UpdateRevoke` 落撤回信息；历史补拉时把原消息改写为 111 Revoke | `chat.markRevoked`：`status=4` + `contentType=111`，气泡替换为居中灰字「你/对方撤回了一条消息」 |
+| 删除（仅自己） | `messages.delete` → 2102 `DeleteMsgsTips` | 按用户逻辑删除可见性 | `chat.markDeleted`：从内存列表移除，不留占位 |
+
+- **撤回时限**：本人只能撤回 **2 分钟内**的消息（`REVOKE_WINDOW_MS`），点击时前端二次校验，服务端 `checkRevokeWindow` 终裁并返回 `1405`；群主/群管理员、IM 管理员**代撤他人**消息豁免时限，但仍受角色约束（群管理员不能撤群主/管理员的消息）。
+- **入口**：气泡悬停（`group-hover`）显示「撤回 / 删除」，悬停区域只覆盖气泡本体；`seq` 由 `resolveMessageSeq` 从本地缓存按 `clientMsgID` / `serverMsgID` 反查（发送回包不含 seq，刚发的消息需等同步）。
+
 ## 9. 路由与页面
 
 | 路由 | 页面 | 说明 |
@@ -310,9 +339,12 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 | `/login` | LoginView | 登录 / 注册切换；已登录自动跳 `/chat` |
 | `/chat` | ChatView | 无选中会话时显示空状态 |
 | `/chat/:conversationID` | ChatView | 三栏布局，右栏按会话 ID 定位 |
-| `/contacts` | ContactsView | 「联系人 / 群」两个 tab，点击跳会话；群详情复用会话右栏 |
-| `/settings` | SettingsView | 资料、设备、密码、注销（P1/P2） |
-| `/settings/devices` | 子路由 | 设备管理与踢出 |
+| `/contacts` | ContactsView | 「联系人 / 群」两个 tab，点击跳会话；点头像/昵称进资料详情 |
+| `/settings` | SettingsView | 资料编辑、安全入口（会话/设备/改密）、连接状态、退出登录 |
+| `/settings/sessions` | SessionsView | 登录会话列表与踢出（当前会话不可踢） |
+| `/settings/devices` | DevicesView | 设备列表与移除（本机不可移除） |
+| `/settings/password` | PasswordView | 修改密码，成功后其它会话被撤销 |
+| `/users/:userId` | UserProfileView | 公开资料详情；群聊消息点昵称同样进入 |
 
 路由守卫：无 `BusinessSession` → 重定向 `/login`；有会话但 `stage < im-ready` → 展示连接中遮罩。
 
@@ -320,7 +352,9 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 
 - **三栏骨架**：左侧导航（会话/联系人/设置） + 会话列表（320px） + 聊天区（自适应）
 - **响应式**：< 900px 时导航折叠为图标栏；< 700px 单栏切换（列表 ↔ 聊天）
-- 组件清单：`Avatar`（头像+默认占位）、`MessageList`（虚拟滚动，按会话懒加载历史）、`MessageBubble`（文本/图片/文件三种形态 + 发送状态）、`Composer`（输入 + 附件 + 发送快捷键 Enter/Ctrl+Enter）、`UploadProgress`
+- 组件清单：`Avatar`（头像+默认占位）、`MessageList`（虚拟滚动，按会话懒加载历史）、`MessageBubble`（文本/图片/文件三种形态 + 发送状态 + 悬停撤回/删除）、`Composer`（输入 + 附件 + Enter 发送、Shift+Enter 换行）、`UploadProgress`
+- **输入限制**：单条文本上限 2000 字（`MAX_TEXT_MESSAGE_LENGTH`，`textarea maxlength` + `sendTextMessage` 兜底）；输入框随内容增高 1→6 行（132px），超出内部滚动；剩余 100 字显示计数，达上限变红
+- **气泡宽度**：上限为列宽 70%，`md+` 收紧到 512px；文本用 `overflow-wrap:anywhere`，保证无空格长串（粘贴的 JSON、长链接）也按上限折行而不是撑开气泡
 - 深色模式：Tailwind `dark:` 变量，配置项留在 P2 由 `client-config` 决定
 
 ## 11. 本地持久化策略
@@ -357,20 +391,23 @@ multipart/presign → parts[]（并发 3-4 片 PUT，记 ETag）
 - [x] **滚动定位**：刷新后 `forceBottom`（rAF 循环 1.5s + 禁用浏览器 scroll restoration）覆盖所有异步高度变化；发送消息后自动滚到底；上滑加载历史维持视觉锚点不跳
 - [x] 视图：LoginView、ChatView（三栏）、ContactsView 骨架
 - [x] 断线重连与手动重连入口
+- [x] **撤回 / 删除**：气泡悬停操作；2101 撤回（保留占位「撤回了一条消息」）与 2102 删除（本地移除不留占位）分开处理；本人撤回限 2 分钟，服务端 `1405` 终裁
+- [x] **输入体验**：textarea 随内容增高 1→6 行、单条 2000 字上限与计数、长文本气泡按宽度上限折行
 
-### P1 完整账号与资料（v0.2 · 下一批）
+### P1 完整账号与资料（v0.2 · 已落地）
 
-- [ ] 群聊气泡显示成员昵称（`SessionType.Group` 分支，已暴露 `contacts.nicknameOf`）、群聊 ConversationList 显示群图标
-- [ ] 草稿读写：`chat.drafts` 字段 + localStorage 已实现，Composer 未读写（5 分钟活）
-- [ ] 会话置顶：SDK `isPinned` 已存本地，ConversationItem 未显示置顶图标/未提供置顶/取消置顶操作
-- [ ] 资料编辑与头像上传（`purpose=avatar`）：`updateMyProfile` + `/files/presign` + SettingsView 头像入口
-- [ ] `/account/sessions`、revoke、password、`/devices`（API 契约未写，store/UI 全无）
-- [ ] `profile/users/{userId}` 详情页；`im/retry` 的 service 层封装（SettingsView 与 ChatLayout 已有「重试 IM 连接」按钮，但直调 `imRetry` 而非 `retryIM` service）
+- [x] 群聊气泡显示成员昵称（`isGroup` + `nicknameOf`）、会话列表群头像取 `msgInfo.groupFaceURL`
+- [x] 草稿读写：`chat.drafts` + localStorage，Composer 读写、会话列表显示 `[草稿]` 前缀
+- [x] 会话置顶展示：`ConversationItem` 显示置顶图标（置顶 / 取消置顶的交互入口待补）
+- [x] 资料编辑与头像上传：`services/auth/profile.ts`（`updateMyProfile` + `purpose=avatar` presign 上传），SettingsView 资料区 + 头像点击上传带进度
+- [x] 登录会话与改密：`api/account/account.ts`（`listSessions` / `revokeSession` / `changePassword`）+ `services/account/{sessions,password}.ts` + `views/settings/{SessionsView,PasswordView}.vue`；当前会话不可踢，改密后服务端撤销其它会话
+- [x] 设备管理：`api/account/device.ts`（`listDevices` / `removeDevice`）+ `services/account/devices.ts`（本机设备不可移除）+ `views/settings/DevicesView.vue`
+- [x] 公开资料详情页：`views/profile/UserProfileView.vue`（路由 `/users/:userId`），数据经 `contacts.ensureProfile` 走 `profile/users/{userId}`；入口为联系人头像/昵称、群聊消息发送者昵称；可直接发起单聊
+- [x] `im/retry` 的 service 层封装：`services/auth/loginFlow#retryIM`，ChatLayout 与 SettingsView 均只调该 service
 
 ### P2 增强
 
 - [ ] **群聊管理**：SDK `GroupMgr` 能力完备（建群、群资料、入群申请、成员列表/邀请/踢人/禁言、转让与解散），但 `stores/chat` 未暴露群 action、视图无群列表入口
-- [x] **消息撤回 UI**：气泡悬停显示「撤回 / 删除」；撤回限本人 2 分钟内（服务端 `1405` 终裁，管理员代撤豁免），删除走 2102 本地移除
 - [ ] **消息操作菜单**：气泡悬停操作已落地，长按/右键上下文菜单（引用、转发、复制）待补
 - [ ] **语音消息**：Composer `🎙️` 按钮已占位（disabled），长按录音 → Web Audio API 或 MediaRecorder → ContentType.Voice 103
 - [ ] **拍摄**：Composer 面板 `📷` 已占位，`navigator.mediaDevices.getUserMedia` → 拍照 → 走图片上传链路
