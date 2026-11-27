@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { sendAttachment, sendTextMessage, type AttachmentProgress } from '@/services/chat/send';
 import { useChatStore } from '@/stores/chat';
 import { errorMessage } from '@/utils/error';
+import { MAX_TEXT_MESSAGE_LENGTH } from '@/utils/message';
 import { ATTACHMENT_MIMES } from '@/api/file/file';
 import { EMOJI_GROUPS, loadRecentEmojis, saveRecentEmoji } from '@/utils/emoji';
 
@@ -33,6 +34,27 @@ const draft = computed({
   get: () => chat.drafts[chat.activeConversationID] ?? '',
   set: (value: string) => chat.setDraft(value),
 });
+
+// 输入框随内容增高：最矮 1 行，最高 6 行（132px = 6×20px 行高 + 12px 内边距），超出内部滚动
+const MAX_TEXTAREA_HEIGHT = 132;
+// 剩余 100 字开始提示计数（对齐 Telegram 的做法）
+const showCounter = computed(
+  () => draft.value.length >= MAX_TEXT_MESSAGE_LENGTH - 100,
+);
+
+function autoResize(): void {
+  const ta = textareaRef.value;
+  if (!ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = `${Math.min(ta.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
+  ta.style.overflowY = ta.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
+}
+
+// 内容变化（输入、插入表情、切换会话草稿、发送后清空）都重新量高
+watch(draft, () => {
+  void nextTick(autoResize);
+});
+onMounted(autoResize);
 
 const canSend = computed(
   () => Boolean(chat.activeConversation) && draft.value.trim().length > 0 && !sending.value && !uploading.value,
@@ -358,15 +380,25 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <!-- textarea：全宽，紧贴工具栏 -->
-      <textarea
-        ref="textareaRef"
-        v-model="draft"
-        rows="1"
-        placeholder="输入消息"
-        class="min-h-[34px] max-h-28 flex-1 resize-none rounded-lg bg-slate-100 px-3 py-1.5 text-sm outline-none focus:bg-white focus:ring-1 focus:ring-green-400"
-        @keydown="onKeydown"
-      />
+      <!-- textarea：随内容增高（最多 6 行），超出内部滚动；接近上限显示字数 -->
+      <div class="min-w-0 flex-1">
+        <textarea
+          ref="textareaRef"
+          v-model="draft"
+          rows="1"
+          :maxlength="MAX_TEXT_MESSAGE_LENGTH"
+          placeholder="输入消息"
+          class="block min-h-[34px] w-full resize-none rounded-lg bg-slate-100 px-3 py-1.5 text-sm leading-5 outline-none focus:bg-white focus:ring-1 focus:ring-green-400"
+          @keydown="onKeydown"
+        />
+        <div
+          v-if="showCounter"
+          class="mt-0.5 text-right text-[11px]"
+          :class="draft.length >= MAX_TEXT_MESSAGE_LENGTH ? 'text-red-500' : 'text-slate-400'"
+        >
+          {{ draft.length }}/{{ MAX_TEXT_MESSAGE_LENGTH }}
+        </div>
+      </div>
 
       <!-- 发送按钮：在工具栏最右 -->
       <button

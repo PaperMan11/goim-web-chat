@@ -16,7 +16,7 @@ import { sendText } from '@/im/message';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { isImageMime, validateAttachment } from '@/utils/file';
-import { messageText } from '@/utils/message';
+import { MAX_TEXT_MESSAGE_LENGTH, messageText } from '@/utils/message';
 
 export interface MessageTarget {
   sessionType: number;
@@ -41,6 +41,10 @@ export function targetOfConversation(conv: Conversation): MessageTarget | undefi
 }
 
 export async function sendTextMessage(conv: Conversation, text: string): Promise<void> {
+  // 输入框已限制 maxlength，这里兜住其它入口（脚本、粘贴、草稿恢复）
+  if (text.length > MAX_TEXT_MESSAGE_LENGTH) {
+    throw new Error(`单条消息最多 ${MAX_TEXT_MESSAGE_LENGTH} 字`);
+  }
   const auth = useAuthStore();
   const chat = useChatStore();
   const conversationID = conv.conversationID;

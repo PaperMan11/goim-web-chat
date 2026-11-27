@@ -10,6 +10,9 @@ import {
 
 type MessageLike = Pick<MsgData, 'contentType' | 'content'>;
 
+// 单条文本消息上限：对齐微信的 2000 字（服务端暂无长度校验，由客户端与输入框共同把关）
+export const MAX_TEXT_MESSAGE_LENGTH = 2000;
+
 // 单条消息的纯文本展示（图片/文件等返回占位文案）
 export function messageText(msg?: MessageLike): string {
   // 撤回后 SDK 会把摘要 content 清空、contentType 改写为 111 Revoke，
